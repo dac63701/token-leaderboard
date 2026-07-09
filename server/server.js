@@ -154,6 +154,7 @@ function computeModels(sessions) {
         cache_write: 0,
         reasoning: 0,
         sessions: 0,
+        sources: [],
       });
     }
     const entry = modelMap.get(model);
@@ -163,6 +164,10 @@ function computeModels(sessions) {
     entry.cache_write += s.cache_write || 0;
     entry.reasoning += s.reasoning || 0;
     entry.sessions += 1;
+    // Track unique sources
+    if (s.source && !entry.sources.includes(s.source)) {
+      entry.sources.push(s.source);
+    }
   }
 
   return Array.from(modelMap.values());
@@ -185,6 +190,12 @@ function mergeModels(existingModels, newSessions) {
       existing.cache_write += m.cache_write;
       existing.reasoning += m.reasoning;
       existing.sessions += m.sessions;
+      // Merge sources without duplicates
+      for (const src of m.sources || []) {
+        if (!existing.sources.includes(src)) {
+          existing.sources.push(src);
+        }
+      }
     } else {
       merged.set(m.model, { ...m });
     }

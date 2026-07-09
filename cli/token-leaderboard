@@ -20,6 +20,8 @@ CONFIG_FILE="${CONFIG_DIR}/config"
 UPLOADED_FILE="${CONFIG_DIR}/uploaded"
 SESSION_STATE_FILE="${CONFIG_DIR}/session_state"
 DB="${HOME}/.local/share/opencode/opencode.db"
+CLAUDE_CODE_DIR="${HOME}/.claude/projects"
+CODEX_CLI_DIR="${HOME}/.codex/sessions"
 
 # ============================================================
 # Defaults
@@ -28,7 +30,7 @@ NICKNAME=""
 SERVER_URL="https://token.dac63701.com"
 AUTO=0
 AUTO_UPDATE=1
-AUTO_INTERVAL=60
+AUTO_INTERVAL=10
 GITHUB_TOKEN=""
 
 # ============================================================
@@ -94,7 +96,7 @@ Configuration: ~/.config/token-leaderboard/config
   NICKNAME=<your-name>
   SERVER_URL=<leaderboard-server-url>
   AUTO=0|1
-  AUTO_INTERVAL=<seconds>        (default 60)
+  AUTO_INTERVAL=<minutes>        (default 10)
   AUTO_UPDATE=0|1                  (default 1)
   GITHUB_TOKEN=<token>
 
@@ -159,6 +161,20 @@ parse_json_bool() {
 }
 
 # ============================================================
+# String hashing helper (for session IDs from file paths)
+# ============================================================
+string_md5() {
+  local input="$1"
+  if command -v md5 &>/dev/null; then
+    printf '%s' "$input" | md5
+  elif command -v md5sum &>/dev/null; then
+    printf '%s' "$input" | md5sum | cut -d' ' -f1
+  else
+    printf '%s' "$input"
+  fi
+}
+
+# ============================================================
 # Config file operations
 # ============================================================
 load_config() {
@@ -175,7 +191,7 @@ print_config() {
   echo "NICKNAME=${NICKNAME:-}"
   echo "SERVER_URL=${SERVER_URL:-https://token.dac63701.com}"
   echo "AUTO=${AUTO:-0}"
-  echo "AUTO_INTERVAL=${AUTO_INTERVAL:-60}"
+  echo "AUTO_INTERVAL=${AUTO_INTERVAL:-10}"
   echo "AUTO_UPDATE=${AUTO_UPDATE:-1}"
   echo "GITHUB_TOKEN=${GITHUB_TOKEN:+<set>}"
 }
@@ -186,7 +202,7 @@ save_config() {
 NICKNAME=$1
 SERVER_URL=$2
 AUTO=$3
-AUTO_INTERVAL=${4:-60}
+AUTO_INTERVAL=${4:-10}
 AUTO_UPDATE=${5:-1}
 GITHUB_TOKEN=${6:-}
 EOF
@@ -212,8 +228,8 @@ prompt_config() {
   read -r -p "Auto-upload on shell start? (0=no, 1=yes) [0]: " input_auto
   AUTO="${input_auto:-0}"
 
-  read -r -p "Upload interval in seconds [60]: " input_interval
-  AUTO_INTERVAL="${input_interval:-60}"
+  read -r -p "Upload interval in minutes [10]: " input_interval
+  AUTO_INTERVAL="${input_interval:-10}"
 
   read -r -p "Auto-update CLI? (0=no, 1=yes) [1]: " input_auto_update
   AUTO_UPDATE="${input_auto_update:-1}"
@@ -451,11 +467,10 @@ fi
 SERVER_URL="${SERVER_URL%/}"
 
 # ============================================================
-# Check DB exists
+# Check DB exists (optional with multi-source)
 # ============================================================
-if [ ! -f "$DB" ]; then
-  echo "OpenCode DB not found at ${DB}"
-  exit 1
+if [ ! -f "$DB" ] && [ "$AUTO_MODE" = false ]; then
+  echo "Note: OpenCode DB not found at ${DB} (will try other sources)"
 fi
 
 # ============================================================
@@ -509,9 +524,13 @@ json_escape() {
 }
 
 # ============================================================
-# Upload cycle: query DB → filter → build JSON → upload
+# Multi-source readers
 # ============================================================
-run_upload_cycle() {
+
+read_opencode() {
+  if [ ! -f "$DB" ]; then
+    return 0
+  fi
   local QUERY="
   SELECT
     id,
@@ -534,25 +553,8 @@ run_upload_cycle() {
      OR tokens_reasoning > 0
   ORDER BY time_created ASC
   "
-
-  SESSION_IDS=()
-  MODEL_IDS=()
-  PROVIDERS=()
-  TOKENS_INPUT=()
-  TOKENS_OUTPUT=()
-  TOKENS_CACHE_READ=()
-  TOKENS_CACHE_WRITE=()
-  TOKENS_REASONING=()
-  COSTS=()
-  TIMES_CREATED=()
-  TIMES_UPDATED=()
-  TITLES=()
-  IS_NEW=()
-  IS_DELTA=()
-
   while IFS=$'\t' read -r id model_id provider ti to tcr tcw tr cost ts_tc ts_tu title_rest; do
     [ -z "$id" ] && continue
-
     SESSION_IDS+=("$id")
     MODEL_IDS+=("$model_id")
     PROVIDERS+=("$provider")
@@ -565,6 +567,199 @@ run_upload_cycle() {
     TIMES_CREATED+=("$ts_tc")
     TIMES_UPDATED+=("$ts_tu")
     TITLES+=("$title_rest")
+    SOURCES+=("opencode")
+  done < <(sqlite3 -separator $'\t' "$DB" "$QUERY" 2>/dev/null)
+}
+
+# ============================================================
+# Read Claude Code sessions
+# ============================================================
+read_claude_code() {
+  local dir="$CLAUDE_CODE_DIR"
+  if [ ! -d "$dir" ]; then
+    return 0
+  fi
+  while IFS= read -r -d '' file; do
+    local session_id
+    session_id=$(string_md5 "$file")
+    local mtime=0
+    mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=0
+    local last_line
+    last_line=$(tail -1 "$file" 2>/dev/null)
+    [ -z "$last_line" ] && continue
+    local input_tokens output_tokens cache_creation cache_read cost model
+    input_tokens=$(echo "$last_line" | parse_json_value "input_tokens")
+    output_tokens=$(echo "$last_line" | parse_json_value "output_tokens")
+    cache_creation=$(echo "$last_line" | parse_json_value "cache_creation_input_tokens")
+    cache_read=$(echo "$last_line" | parse_json_value "cache_read_input_tokens")
+    cost=$(echo "$last_line" | parse_json_value "total_cost_usd")
+    model=$(grep -o '"model"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" 2>/dev/null | head -1 | sed 's/"model" *: *"//;s/"//')
+    input_tokens=${input_tokens:-0}
+    output_tokens=${output_tokens:-0}
+    cache_creation=${cache_creation:-0}
+    cache_read=${cache_read:-0}
+    cost=${cost:-0}
+    model=${model:-unknown}
+    SESSION_IDS+=("${session_id}")
+    MODEL_IDS+=("${model}")
+    PROVIDERS+=("")
+    TOKENS_INPUT+=("${input_tokens}")
+    TOKENS_OUTPUT+=("${output_tokens}")
+    TOKENS_CACHE_READ+=("${cache_read}")
+    TOKENS_CACHE_WRITE+=("${cache_creation}")
+    TOKENS_REASONING+=("0")
+    COSTS+=("${cost}")
+    TIMES_CREATED+=("${mtime}")
+    TIMES_UPDATED+=("${mtime}")
+    TITLES+=("Claude Code session")
+    SOURCES+=("claude-code")
+  done < <(find "$dir" -name "*.jsonl" -type f -print0 2>/dev/null)
+}
+
+# ============================================================
+# Read Codex CLI sessions
+# ============================================================
+read_codex_cli() {
+  local dir="$CODEX_CLI_DIR"
+  if [ ! -d "$dir" ]; then
+    return 0
+  fi
+  while IFS= read -r -d '' file; do
+    local session_id
+    session_id=$(string_md5 "$file")
+    local mtime=0
+    mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=0
+    local model
+    model=$(grep -o '"model"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" 2>/dev/null | head -1 | sed 's/"model" *: *"//;s/"//')
+    model=${model:-unknown}
+    local token_lines
+    token_lines=$(grep '"token_count"' "$file" 2>/dev/null)
+    [ -z "$token_lines" ] && continue
+    local last_token_line
+    last_token_line=$(echo "$token_lines" | tail -1)
+    local input_tokens cached_input_tokens output_tokens reasoning_tokens
+    input_tokens=$(echo "$last_token_line" | parse_json_value "input_tokens")
+    cached_input_tokens=$(echo "$last_token_line" | parse_json_value "cached_input_tokens")
+    output_tokens=$(echo "$last_token_line" | parse_json_value "output_tokens")
+    reasoning_tokens=$(echo "$last_token_line" | parse_json_value "reasoning_output_tokens")
+    input_tokens=${input_tokens:-0}
+    cached_input_tokens=${cached_input_tokens:-0}
+    output_tokens=${output_tokens:-0}
+    reasoning_tokens=${reasoning_tokens:-0}
+    SESSION_IDS+=("${session_id}")
+    MODEL_IDS+=("${model}")
+    PROVIDERS+=("")
+    TOKENS_INPUT+=("${input_tokens}")
+    TOKENS_OUTPUT+=("${output_tokens}")
+    TOKENS_CACHE_READ+=("${cached_input_tokens}")
+    TOKENS_CACHE_WRITE+=("0")
+    TOKENS_REASONING+=("${reasoning_tokens}")
+    COSTS+=("0")
+    TIMES_CREATED+=("${mtime}")
+    TIMES_UPDATED+=("${mtime}")
+    TITLES+=("Codex CLI session")
+    SOURCES+=("codex-cli")
+  done < <(find "$dir" -name "*.jsonl" -type f -print0 2>/dev/null)
+}
+
+# ============================================================
+# Read Copilot debug logs
+# ============================================================
+read_copilot() {
+  local found_any=false
+  for base in \
+    "${HOME}/Library/Application Support/Code/User/workspaceStorage" \
+    "${HOME}/.config/Code/User/workspaceStorage"; do
+    [ ! -d "$base" ] && continue
+    while IFS= read -r -d '' file; do
+      local llm_requests
+      llm_requests=$(grep '"llm_request"' "$file" 2>/dev/null)
+      [ -z "$llm_requests" ] && continue
+      local mtime=0
+      mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=0
+      local models_list
+      models_list=$(echo "$llm_requests" | grep -o '"model"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/"model" *: *"//;s/"//' | sort -u)
+      [ -z "$models_list" ] && continue
+      while IFS= read -r model; do
+        [ -z "$model" ] && continue
+        local ti_total=0 to_total=0 ct_total=0
+        while IFS= read -r line; do
+          [ -z "$line" ] && continue
+          local ti to ct
+          ti=$(echo "$line" | parse_json_value "inputTokens")
+          to=$(echo "$line" | parse_json_value "outputTokens")
+          ct=$(echo "$line" | parse_json_value "cachedTokens")
+          ti_total=$((ti_total + ${ti:-0}))
+          to_total=$((to_total + ${to:-0}))
+          ct_total=$((ct_total + ${ct:-0}))
+        done < <(echo "$llm_requests" | grep -F "\"${model}\"")
+        local session_id
+        session_id=$(string_md5 "${file}-${model}")
+        SESSION_IDS+=("${session_id}")
+        MODEL_IDS+=("${model}")
+        PROVIDERS+=("")
+        TOKENS_INPUT+=("${ti_total}")
+        TOKENS_OUTPUT+=("${to_total}")
+        TOKENS_CACHE_READ+=("${ct_total}")
+        TOKENS_CACHE_WRITE+=("0")
+        TOKENS_REASONING+=("0")
+        COSTS+=("0")
+        TIMES_CREATED+=("${mtime}")
+        TIMES_UPDATED+=("${mtime}")
+        TITLES+=("Copilot session")
+        SOURCES+=("copilot")
+        found_any=true
+      done <<< "$models_list"
+    done < <(find "$base" -path "*/GitHub.copilot-chat/debug-logs/*/main.jsonl" -type f -print0 2>/dev/null)
+  done
+}
+
+# ============================================================
+# Read all available sources
+# ============================================================
+read_all_sources() {
+  read_opencode
+  if [ -d "$CLAUDE_CODE_DIR" ]; then
+    read_claude_code
+  fi
+  if [ -d "$CODEX_CLI_DIR" ]; then
+    read_codex_cli
+  fi
+  read_copilot
+}
+
+# ============================================================
+# Upload cycle: query DB → filter → build JSON → upload
+# ============================================================
+run_upload_cycle() {
+  SESSION_IDS=()
+  MODEL_IDS=()
+  PROVIDERS=()
+  TOKENS_INPUT=()
+  TOKENS_OUTPUT=()
+  TOKENS_CACHE_READ=()
+  TOKENS_CACHE_WRITE=()
+  TOKENS_REASONING=()
+  COSTS=()
+  TIMES_CREATED=()
+  TIMES_UPDATED=()
+  TITLES=()
+  SOURCES=()
+
+  # Read from all available sources
+  read_all_sources
+
+  # Check new/delta for all entries
+  IS_NEW=()
+  IS_DELTA=()
+  for i in "${!SESSION_IDS[@]}"; do
+    local id="${SESSION_IDS[$i]}"
+    local ti="${TOKENS_INPUT[$i]}"
+    local to="${TOKENS_OUTPUT[$i]}"
+    local tcr="${TOKENS_CACHE_READ[$i]}"
+    local tcw="${TOKENS_CACHE_WRITE[$i]}"
+    local tr="${TOKENS_REASONING[$i]}"
+    local ts_tu="${TIMES_UPDATED[$i]}"
 
     if is_uploaded "$id"; then
       IS_NEW+=("0")
@@ -590,7 +785,7 @@ run_upload_cycle() {
       IS_NEW+=("1")
       IS_DELTA+=("0")
     fi
-  done < <(sqlite3 -separator $'\t' "$DB" "$QUERY" 2>/dev/null)
+  done
 
   UPLOAD_IDS=()
   UPLOAD_MODEL_IDS=()
@@ -605,6 +800,7 @@ run_upload_cycle() {
   UPLOAD_TITLES=()
   UPLOAD_IS_DELTA=()
   UPLOAD_TIMES_UPDATED=()
+  UPLOAD_SOURCES=()
 
   for i in "${!SESSION_IDS[@]}"; do
     if [ "${IS_NEW[$i]}" = "1" ] || [ "${IS_DELTA[$i]}" = "1" ]; then
@@ -621,6 +817,7 @@ run_upload_cycle() {
       UPLOAD_TITLES+=("${TITLES[$i]}")
       UPLOAD_IS_DELTA+=("${IS_DELTA[$i]}")
       UPLOAD_TIMES_UPDATED+=("${TIMES_UPDATED[$i]}")
+      UPLOAD_SOURCES+=("${SOURCES[$i]}")
     fi
   done
 
@@ -637,11 +834,12 @@ run_upload_cycle() {
   local json="{\"nickname\":\"${nickname_escaped}\",\"sessions\":["
   local first=true
   for i in "${!UPLOAD_IDS[@]}"; do
-    local id_escaped model_id_escaped provider_escaped title_escaped
+    local id_escaped model_id_escaped provider_escaped title_escaped source_escaped
     id_escaped=$(json_escape "${UPLOAD_IDS[$i]}")
     model_id_escaped=$(json_escape "${UPLOAD_MODEL_IDS[$i]}")
     provider_escaped=$(json_escape "${UPLOAD_PROVIDERS[$i]}")
     title_escaped=$(json_escape "${UPLOAD_TITLES[$i]}")
+    source_escaped=$(json_escape "${UPLOAD_SOURCES[$i]}")
     if [ "$first" = true ]; then first=false; else json+=","; fi
     json+="{\"id\":\"${id_escaped}\""
     json+=",\"model_id\":\"${model_id_escaped}\""
@@ -654,6 +852,7 @@ run_upload_cycle() {
     json+=",\"cost\":${UPLOAD_COSTS[$i]}"
     json+=",\"time_created\":${UPLOAD_TIMES[$i]}"
     json+=",\"title\":\"${title_escaped}\""
+    json+=",\"source\":\"${source_escaped}\""
     if [ "${UPLOAD_IS_DELTA[$i]}" = "1" ]; then
       json+=",\"delta\":true"
     fi
@@ -701,8 +900,10 @@ run_upload_cycle() {
     fi
     return 0
   else
-    echo "Error: Server returned HTTP ${http_code}"
-    if [ -n "$body" ]; then echo "Response: $body"; fi
+    if [ "$AUTO_MODE" = false ]; then
+      echo "Error: Server returned HTTP ${http_code}"
+      if [ -n "$body" ]; then echo "Response: $body"; fi
+    fi
     return 1
   fi
 }
@@ -713,7 +914,7 @@ run_upload_cycle() {
 if [ "$AUTO_MODE" = true ]; then
   while true; do
     run_upload_cycle
-    sleep "${AUTO_INTERVAL:-60}"
+    sleep "$(( ${AUTO_INTERVAL:-10} * 60 ))"
   done
 else
   run_upload_cycle

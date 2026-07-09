@@ -51,6 +51,13 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+const SOURCE_CONFIG = {
+  'opencode':    { color: '#6366f1', label: 'OpenCode' },
+  'claude-code': { color: '#d97706', label: 'Claude' },
+  'codex-cli':   { color: '#10b981', label: 'Codex' },
+  'copilot':     { color: '#6b7280', label: 'Copilot' }
+};
+
 function formatCompact(n) {
   if (n == null || isNaN(n)) return '0';
   if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
@@ -229,6 +236,10 @@ function toggleExpandRow(row) {
   if (models.length === 0) return;
 
   var subRows = models.map(function(m) {
+    var srcBadges = (m.sources || []).map(function(src) {
+      var cfg = SOURCE_CONFIG[src] || { color: '#9ca3af', label: src };
+      return '<span class="source-badge" style="background:' + cfg.color + '">' + cfg.label + '</span>';
+    }).join('');
     return '<tr>' +
       '<td>' + escapeHtml(m.model || 'unknown') + '</td>' +
       '<td class="num-cell">' + formatNumber(m.input || 0) + '</td>' +
@@ -237,12 +248,13 @@ function toggleExpandRow(row) {
       '<td class="num-cell">' + formatNumber(m.cache_write || 0) + '</td>' +
       '<td class="num-cell">' + formatNumber(m.reasoning || 0) + '</td>' +
       '<td class="num-cell">' + formatNumber(m.sessions || 0) + '</td>' +
+      '<td class="source-cell">' + srcBadges + '</td>' +
     '</tr>';
   }).join('');
 
   var subTable = '<table class="expanded-sub-table">' +
     '<thead><tr>' +
-      '<th>Model</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Reasoning</th><th>Sessions</th>' +
+      '<th>Model</th><th>Input</th><th>Output</th><th>Cache Read</th><th>Cache Write</th><th>Reasoning</th><th>Sessions</th><th>Source</th>' +
     '</tr></thead>' +
     '<tbody>' + subRows + '</tbody>' +
   '</table>';
@@ -278,7 +290,8 @@ function getDetailedRows() {
         cache_read: m.cache_read || 0,
         cache_write: m.cache_write || 0,
         reasoning: m.reasoning || 0,
-        sessions: m.sessions || 0
+        sessions: m.sessions || 0,
+        sources: m.sources || []
       });
     }
   }
@@ -294,6 +307,7 @@ var DETAILED_COLUMNS = [
   { key: 'cache_write', label: 'Cache Write', type: 'number' },
   { key: 'reasoning', label: 'Reasoning', type: 'number' },
   { key: 'sessions',  label: 'Sessions',  type: 'number' },
+  { key: 'source',    label: 'Source',    type: 'string' },
   { key: 'cost_per_1m', label: 'Cost/1M', type: 'string' }
 ];
 
@@ -317,8 +331,14 @@ function renderDetailed() {
           vb = vb || 0;
           return state.sortAsc ? va - vb : vb - va;
         }
-        va = (va || '').toString().toLowerCase();
-        vb = (vb || '').toString().toLowerCase();
+        // Source column sorts by concatenated source names
+        if (col.key === 'source') {
+          va = (a.sources || []).join(',').toLowerCase();
+          vb = (b.sources || []).join(',').toLowerCase();
+        } else {
+          va = (va || '').toString().toLowerCase();
+          vb = (vb || '').toString().toLowerCase();
+        }
         if (va < vb) return state.sortAsc ? -1 : 1;
         if (va > vb) return state.sortAsc ? 1 : -1;
         return 0;
@@ -347,6 +367,10 @@ function renderDetailed() {
     var safeTk = tokenBreakdown.replace(/"/g, '&quot;');
     var pricing = state.pricingCache[r.model];
     var costPer1M = pricing ? '$' + formatCost((pricing.input || 0) + (pricing.output || 0)) : '\u2014';
+    var srcBadges = (r.sources || []).map(function(src) {
+      var cfg = SOURCE_CONFIG[src] || { color: '#9ca3af', label: src };
+      return '<span class="source-badge" style="background:' + cfg.color + '">' + cfg.label + '</span>';
+    }).join('');
     return '<tr>' +
       '<td class="nickname-cell">' + escapeHtml(r.nickname) + '</td>' +
       '<td>' + escapeHtml(r.model) + '</td>' +
@@ -356,6 +380,7 @@ function renderDetailed() {
       '<td class="num-cell token-cell" data-tk="' + safeTk + '">' + formatNumber(r.cache_write) + '</td>' +
       '<td class="num-cell token-cell" data-tk="' + safeTk + '">' + formatNumber(r.reasoning) + '</td>' +
       '<td class="num-cell">' + formatNumber(r.sessions) + '</td>' +
+      '<td class="source-cell">' + srcBadges + '</td>' +
       '<td class="num-cell cost-cell" data-model="' + escapeHtml(r.model) + '">' + costPer1M + '</td>' +
     '</tr>';
   }).join('');

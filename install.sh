@@ -82,20 +82,7 @@ detect_opencode_db() {
 }
 
 # ===============================================================
-#  2. Nickname
-# ===============================================================
-configure_nickname() {
-  if $NONINTERACTIVE; then
-    NICKNAME="$DEFAULT_NICKNAME"
-  else
-    prompt "Enter your display name for the leaderboard" "$DEFAULT_NICKNAME" NICKNAME
-  fi
-  echo "  → Nickname: $NICKNAME"
-  echo ""
-}
-
-# ===============================================================
-#  3. Server URL
+#  2. Server URL
 # ===============================================================
 configure_server_url() {
   if $NONINTERACTIVE; then
@@ -114,7 +101,7 @@ configure_server_url() {
 configure_auto_upload() {
   if $NONINTERACTIVE; then
     AUTO=false
-    AUTO_INTERVAL=60
+    AUTO_INTERVAL=10
     AUTO_UPDATE=true
   else
     local yn
@@ -125,16 +112,16 @@ configure_auto_upload() {
     AUTO="$yn"
 
     if $AUTO; then
-      prompt "Upload interval in seconds" "60" AUTO_INTERVAL
+      prompt "Upload interval in minutes" "10" AUTO_INTERVAL
       prompt_yn "Auto-update CLI when new version is available? [Y/n]" "y" yn
       AUTO_UPDATE="$yn"
     else
-      AUTO_INTERVAL=60
+      AUTO_INTERVAL=10
       AUTO_UPDATE=true
     fi
   fi
   if $AUTO; then
-    echo "  → Auto-upload: enabled (every ${AUTO_INTERVAL}s)"
+    echo "  → Auto-upload: enabled (every ${AUTO_INTERVAL}m)"
     echo "  → Auto-update: $AUTO_UPDATE"
   else
     echo "  → Auto-upload: disabled"
@@ -191,7 +178,7 @@ install_shell_hook() {
     *)   rc_file="${HOME}/.profile" ;;
   esac
 
-  local hook_line="(while true; do ~/.local/bin/token-leaderboard --auto 2>/dev/null; sleep ${AUTO_INTERVAL:-60}; done &) 2>/dev/null"
+  local hook_line="(while true; do ~/.local/bin/token-leaderboard --auto 2>/dev/null; sleep $((AUTO_INTERVAL * 60)); done &) 2>/dev/null"
   local marker="# Token Leaderboard auto-upload"
 
   if $NONINTERACTIVE; then
@@ -231,42 +218,80 @@ install_shell_hook() {
 }
 
 # ===============================================================
-#  7. GitHub OAuth login prompt
+#  7. GitHub OAuth device flow (blocking)
 # ===============================================================
 github_login_prompt() {
   if $NONINTERACTIVE; then
+    echo "  Skipping GitHub auth (non-interactive mode)."
+    echo ""
     return
   fi
 
-  local yn
-  prompt_yn "Login with GitHub? (enables authenticated uploads) [y/N]" "n" yn
-  if $yn; then
-    echo "  → Run 'token-leaderboard --login' after installation"
-  fi
   echo ""
-}
+  echo "  === GitHub Authentication ==="
+  echo ""
+  echo "  Token Leaderboard uses GitHub for identity. You'll need to authenticate."
+  echo ""
 
-# ===============================================================
-#  8. Server setup prompt
-# ===============================================================
-server_setup_prompt() {
-  if $NONINTERACTIVE; then
-    SETUP_SERVER=false
-    return
+  local response user_code device_code verification_uri interval
+
+  response="$(curl -s "$SERVER_URL/api/auth/github/device")"
+
+  user_code="$(echo "$response" | grep -o '"user_code":"[^"]*"' | sed 's/"user_code":"//;s/"//')"
+  device_code="$(echo "$response" | grep -o '"device_code":"[^"]*"' | sed 's/"device_code":"//;s/"//')"
+  verification_uri="$(echo "$response" | grep -o '"verification_uri":"[^"]*"' | sed 's/"verification_uri":"//;s/"//')"
+  interval="$(echo "$response" | grep -o '"interval":[0-9]*' | sed 's/"interval"://')"
+
+  if [ -z "$user_code" ] || [ -z "$device_code" ]; then
+    echo "  ERROR: Failed to start GitHub device auth. Server response:"
+    echo "         $response"
+    echo ""
+    exit 1
   fi
 
-  local yn
-  prompt_yn "Start the leaderboard server locally? [y/N]" "n" yn
-  SETUP_SERVER="$yn"
+  echo "  Open this URL: ${verification_uri:-https://github.com/login/device}"
+  echo "  Enter code:    $user_code"
+  echo ""
 
-  if $SETUP_SERVER; then
-    echo ""
-    echo "  To start the server:"
-    echo "    cd server && npm install && npm start"
-    echo "  Then open http://localhost:3456"
-    echo ""
-  fi
+  local poll_interval="${interval:-5}"
+  echo "  Waiting for authentication …"
+
+  while true; do
+    sleep "$poll_interval"
+    local poll_result
+    poll_result="$(curl -s "$SERVER_URL/api/auth/github/poll" \
+      -H "Content-Type: application/json" \
+      -d "{\"device_code\":\"$device_code\"}")"
+
+    local status
+    status="$(echo "$poll_result" | grep -o '"status":"[^"]*"' | sed 's/"status":"//;s/"//')"
+
+    case "$status" in
+      complete)
+        local token nickname
+        token="$(echo "$poll_result" | grep -o '"token":"[^"]*"' | sed 's/"token":"//;s/"//')"
+        nickname="$(echo "$poll_result" | grep -o '"nickname":"[^"]*"' | sed 's/"nickname":"//;s/"//')"
+        GITHUB_TOKEN="$token"
+        NICKNAME="$nickname"
+        echo "  ✓ Authenticated as: $NICKNAME"
+        echo ""
+        return
+        ;;
+      expired|error)
+        local error_desc
+        error_desc="$(echo "$poll_result" | grep -o '"error_description":"[^"]*"' | sed 's/"error_description":"//;s/"//')"
+        echo "  Error: ${error_desc:-$status}"
+        echo ""
+        exit 1
+        ;;
+      *)
+        # Still waiting — continue polling
+        ;;
+    esac
+  done
 }
+
+
 
 # ===============================================================
 #  Save config
@@ -281,9 +306,9 @@ save_config() {
     echo "NICKNAME=${NICKNAME}"
     echo "SERVER_URL=${SERVER_URL}"
     echo "AUTO=$($AUTO && echo 1 || echo 0)"
-    echo "AUTO_INTERVAL=${AUTO_INTERVAL:-60}"
+    echo "AUTO_INTERVAL=${AUTO_INTERVAL:-10}"
     echo "AUTO_UPDATE=$($AUTO_UPDATE && echo 1 || echo 0)"
-    echo "GITHUB_TOKEN="
+    echo "GITHUB_TOKEN=${GITHUB_TOKEN}"
   } > "$CONFIG_FILE"
 
   echo "  ✓ Config saved to: $CONFIG_FILE"
@@ -295,7 +320,7 @@ save_config() {
 # ===============================================================
 print_summary() {
   local auto_status
-  if $AUTO; then auto_status="enabled (every ${AUTO_INTERVAL}s)"; else auto_status="disabled"; fi
+  if $AUTO; then auto_status="enabled (every ${AUTO_INTERVAL}m)"; else auto_status="disabled"; fi
 
   echo "╔══════════════════════════════════════╗"
   echo "║         Installation Complete         ║"
@@ -304,10 +329,10 @@ print_summary() {
   echo "  Config:  ${CONFIG_DIR}/config"
   echo "  CLI:     ${CLI_TARGET}"
   echo "  Server:  ${SERVER_URL}"
+  echo "  Nickname: ${NICKNAME} (from GitHub)"
   echo "  Auto:    ${auto_status}"
   echo ""
   echo "  Run 'token-leaderboard' to upload your tokens."
-  echo "  Run 'token-leaderboard --login' to authenticate with GitHub."
   echo "  Run 'token-leaderboard --help' for all options."
   echo ""
 }
@@ -318,13 +343,11 @@ print_summary() {
 main() {
   print_banner
   detect_opencode_db
-  configure_nickname
   configure_server_url
+  github_login_prompt
   configure_auto_upload
   install_cli
   install_shell_hook
-  github_login_prompt
-  server_setup_prompt
   save_config
   print_summary
 }

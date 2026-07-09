@@ -1008,3 +1008,19 @@ footer {
     align-self: flex-end;
   }
 }
+
+/* --- Source Badges --- */
+.source-cell {
+  text-align: center;
+}
+.source-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  margin: 1px 2px;
+  white-space: nowrap;
+}
