@@ -890,7 +890,8 @@ run_upload_cycle() {
   fi
 
   local response
-  response=$(eval curl -s -w \"\\n%{http_code}\" -X POST \
+  response=$(eval curl -s --connect-timeout 10 --max-time 30 \
+    -w \"\\n%{http_code}\" -X POST \
     -H "Content-Type: application/json" \
     $auth_header \
     -d "$json" \
@@ -919,7 +920,11 @@ run_upload_cycle() {
     return 0
   else
     if [ "$AUTO_MODE" = false ]; then
-      echo "Error: Server returned HTTP ${http_code}"
+      if [ -z "$http_code" ]; then
+        echo "Error: Could not connect to server (${SERVER_URL})"
+      else
+        echo "Error: Server returned HTTP ${http_code}"
+      fi
       if [ -n "$body" ]; then echo "Response: $body"; fi
     fi
     return 1
