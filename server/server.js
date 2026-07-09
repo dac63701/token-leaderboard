@@ -2,6 +2,7 @@ import express from "express";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import path from "path";
+import fs from "fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,7 +10,9 @@ const __dirname = path.dirname(__filename);
 const PORT = parseInt(process.env.PORT, 10) || 3456;
 
 // ── Database ────────────────────────────────────────────────────────────────
-const dbPath = path.join(__dirname, "leaderboard.db");
+const dbDir = path.join(__dirname, "data");
+fs.mkdirSync(dbDir, { recursive: true });
+const dbPath = path.join(dbDir, "leaderboard.db");
 const db = new Database(dbPath);
 
 db.pragma("journal_mode = WAL");

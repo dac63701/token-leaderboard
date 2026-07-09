@@ -15,7 +15,7 @@ OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
 
 # ---- Defaults ----
 DEFAULT_NICKNAME="${HOSTNAME:-$(hostname 2>/dev/null || echo "anonymous")}"
-DEFAULT_SERVER_URL="http://localhost:3456"
+DEFAULT_SERVER_URL="https://token.dac63701.com"
 NONINTERACTIVE=false
 
 # ---- Parse flags ----

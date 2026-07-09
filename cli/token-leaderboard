@@ -19,7 +19,7 @@ DB="${HOME}/.local/share/opencode/opencode.db"
 # Defaults
 # ============================================================
 NICKNAME=""
-SERVER_URL="http://localhost:3456"
+SERVER_URL="https://token.dac63701.com"
 AUTO=0
 
 # ============================================================
@@ -116,7 +116,7 @@ load_config() {
 print_config() {
   load_config || true
   echo "NICKNAME=${NICKNAME:-}"
-  echo "SERVER_URL=${SERVER_URL:-http://localhost:3456}"
+  echo "SERVER_URL=${SERVER_URL:-https://token.dac63701.com}"
   echo "AUTO=${AUTO:-0}"
 }
 
