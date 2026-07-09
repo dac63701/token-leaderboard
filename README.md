@@ -99,21 +99,26 @@ docker build -t token-leaderboard server/
 docker run -d -p 3456:3456 token-leaderboard
 ```
 
-### One-command publish (Docker Hub + GitHub)
+### Automated Docker Hub publish (via GitHub Action)
 
+On every push to `main` that changes files in `server/`, a GitHub Action automatically:
+1. Builds the Docker image
+2. Pushes it to Docker Hub as `dac63701/token-leaderboard`
+
+To set this up for your own Docker Hub account:
+
+1. Fork the repo
+2. Go to Settings → Secrets and variables → Actions
+3. Add two secrets:
+   - `DOCKER_USERNAME` — your Docker Hub username
+   - `DOCKER_PASSWORD` — your Docker Hub password or access token
+4. Update `DOCKER_IMAGE` in `.github/workflows/docker-publish.yml` to your username
+
+You can also trigger it manually from the Actions tab in GitHub.
+
+Pull the latest image anytime:
 ```bash
-./docker-publish.sh YOUR_DOCKER_USERNAME
-```
-
-This will:
-1. Build the Docker image
-2. Test it starts correctly
-3. Push to Docker Hub
-4. Commit all changes and push to GitHub
-
-Then anyone can run:
-```bash
-docker run -d -p 3456:3456 YOUR_DOCKER_USERNAME/token-leaderboard
+docker run -d -p 3456:3456 dac63701/token-leaderboard
 ```
 
 ## Deploying the Server
