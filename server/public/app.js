@@ -767,7 +767,11 @@ async function startLoginFlow() {
 
   try {
     var res = await fetch('/api/auth/github/device');
-    if (!res.ok) throw new Error('Failed to start login: ' + res.status);
+    if (!res.ok) {
+      var errBody;
+      try { errBody = await res.json(); } catch (e) {}
+      throw new Error(errBody && errBody.error ? errBody.error : 'Failed to start login: ' + res.status);
+    }
     var data = await res.json();
 
     urlEl.textContent = data.verification_uri;

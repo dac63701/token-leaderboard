@@ -67,6 +67,8 @@ body {
   margin: 0 auto;
   padding: 20px 24px 40px;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* --- Header --- */
@@ -219,7 +221,7 @@ h1 {
 
 /* --- Main Content --- */
 main {
-  min-height: 300px;
+  flex: 1;
 }
 
 .tab-content {

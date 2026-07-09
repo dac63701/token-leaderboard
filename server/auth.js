@@ -36,6 +36,12 @@ export default function createAuthRouter(db) {
 
   router.get("/auth/github/device", async (_req, res) => {
     try {
+      if (!GITHUB_CLIENT_ID || GITHUB_CLIENT_ID === "dev_client_id_placeholder") {
+        return res.status(400).json({
+          error: "GitHub OAuth not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables.",
+        });
+      }
+
       const resp = await fetch("https://github.com/login/device/code", {
         method: "POST",
         headers: {
