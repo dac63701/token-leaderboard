@@ -117,11 +117,14 @@ configure_auto_upload() {
     AUTO=false
   else
     local yn
-    prompt_yn "Upload tokens on every shell start? [y/N]" "n" yn
+    echo ""
+    echo "  Auto-upload runs token-leaderboard every 15 minutes in the"
+    echo "  background, keeping your leaderboard stats up to date."
+    prompt_yn "Enable auto-upload (every 15 min)? [y/N]" "n" yn
     AUTO="$yn"
   fi
   if $AUTO; then
-    echo "  → Auto-upload: enabled"
+    echo "  → Auto-upload: enabled (every 15 minutes)"
   else
     echo "  → Auto-upload: disabled"
   fi
@@ -183,8 +186,8 @@ install_shell_hook() {
     *)   rc_file="${HOME}/.profile" ;;
   esac
 
-  local hook_line='[[ -f ~/.local/bin/token-leaderboard ]] && source <(token-leaderboard --auto)'
-  local marker="# Token Leaderboard auto-upload"
+  local hook_line='(while true; do ~/.local/bin/token-leaderboard --auto 2>/dev/null; sleep 900; done &) 2>/dev/null'
+  local marker="# Token Leaderboard auto-upload (every 15min)"
 
   if $NONINTERACTIVE; then
     INSTALL_HOOK=false
@@ -204,6 +207,11 @@ install_shell_hook() {
   if [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file" 2>/dev/null; then
     echo "  ✓ Shell hook already present in $rc_file"
   else
+    # Remove old-style hook if present
+    if [ -f "$rc_file" ]; then
+      sed -i '' '/# Token Leaderboard auto-upload/d' "$rc_file" 2>/dev/null || true
+      sed -i '' '/token-leaderboard --auto/d' "$rc_file" 2>/dev/null || true
+    fi
     {
       echo ""
       echo "$marker"
@@ -211,6 +219,11 @@ install_shell_hook() {
     } >> "$rc_file"
     echo "  ✓ Added auto-upload hook to $rc_file"
   fi
+  echo ""
+  echo "  ┌──────────────────────────────────────────────────────────┐"
+  echo "  │  Auto-upload will run in the background every 15 minutes. │"
+  echo "  │  It only uploads when new session data is available.     │"
+  echo "  └──────────────────────────────────────────────────────────┘"
   echo ""
 }
 
