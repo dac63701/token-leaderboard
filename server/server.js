@@ -3,6 +3,8 @@ import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import { initPricingEngine, lookupPricing } from "./pricing.js";
+import createAuthRouter from "./auth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,26 +22,61 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS uploads (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nickname TEXT NOT NULL UNIQUE,
-total_input INTEGER DEFAULT 0,
-  total_output INTEGER DEFAULT 0,
-  total_cache_read INTEGER DEFAULT 0,
-  total_cache_write INTEGER DEFAULT 0,
-  total_reasoning INTEGER DEFAULT 0,
-  total_cost REAL DEFAULT 0,
-  session_count INTEGER DEFAULT 0,
-  models_used TEXT DEFAULT '[]',
-  time_uploaded INTEGER NOT NULL,
-  time_from INTEGER,
-  time_to INTEGER
+    total_input INTEGER DEFAULT 0,
+    total_output INTEGER DEFAULT 0,
+    total_cache_read INTEGER DEFAULT 0,
+    total_cache_write INTEGER DEFAULT 0,
+    total_reasoning INTEGER DEFAULT 0,
+    total_cost REAL DEFAULT 0,
+    session_count INTEGER DEFAULT 0,
+    models_used TEXT DEFAULT '[]',
+    time_uploaded INTEGER NOT NULL,
+    time_from INTEGER,
+    time_to INTEGER
+  )
+`);
+
+// Migrate: add new columns (ignore if already exist)
+try {
+  db.exec("ALTER TABLE uploads ADD COLUMN session_ids TEXT DEFAULT '[]'");
+} catch {
+  /* column already exists */
+}
+try {
+  db.exec(
+    "ALTER TABLE uploads ADD COLUMN uploader_github_id INTEGER REFERENCES accounts(github_id)",
+  );
+} catch {
+  /* column already exists */
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS accounts (
+    github_id INTEGER PRIMARY KEY,
+    nickname TEXT,
+    avatar_url TEXT,
+    access_token TEXT,
+    time_created INTEGER,
+    time_updated INTEGER
+  )
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    session_token TEXT PRIMARY KEY,
+    github_id INTEGER NOT NULL,
+    time_created INTEGER
   )
 `);
 
 // Prepared statements
 const upsertStmt = db.prepare(`
   INSERT INTO uploads (nickname, total_input, total_output, total_cache_read, total_cache_write,
-    total_reasoning, total_cost, session_count, models_used, time_uploaded, time_from, time_to)
+    total_reasoning, total_cost, session_count, models_used, session_ids, uploader_github_id,
+    time_uploaded, time_from, time_to)
   VALUES (@nickname, @total_input, @total_output, @total_cache_read, @total_cache_write,
-    @total_reasoning, @total_cost, @session_count, @models_used, @time_uploaded, @time_from, @time_to)
+    @total_reasoning, @total_cost, @session_count, @models_used, @session_ids, @uploader_github_id,
+    @time_uploaded, @time_from, @time_to)
   ON CONFLICT(nickname) DO UPDATE SET
     total_input       = total_input       + @total_input,
     total_output      = total_output      + @total_output,
@@ -49,6 +86,11 @@ const upsertStmt = db.prepare(`
     total_cost        = total_cost        + @total_cost,
     session_count     = session_count     + @session_count,
     models_used       = @models_used,
+    session_ids       = @session_ids,
+    uploader_github_id = CASE
+                          WHEN @uploader_github_id IS NOT NULL THEN @uploader_github_id
+                          ELSE uploader_github_id
+                        END,
     time_uploaded     = @time_uploaded,
     time_from         = CASE
                           WHEN uploads.time_from IS NULL OR @time_from < uploads.time_from
@@ -126,7 +168,6 @@ function computeModels(sessions) {
   return Array.from(modelMap.values());
 }
 
-// merge new models with existing (stored) models
 function mergeModels(existingModels, newSessions) {
   const newModels = computeModels(newSessions);
   const merged = new Map();
@@ -152,6 +193,23 @@ function mergeModels(existingModels, newSessions) {
   return Array.from(merged.values());
 }
 
+function parseSessionIds(row) {
+  try {
+    const val = row ? row.session_ids : null;
+    return val ? JSON.parse(val) : [];
+  } catch {
+    return [];
+  }
+}
+
+function lookupGithubId(token) {
+  if (!token) return null;
+  const session = db
+    .prepare("SELECT github_id FROM sessions WHERE session_token = ?")
+    .get(token);
+  return session ? session.github_id : null;
+}
+
 // ── Express App ─────────────────────────────────────────────────────────────
 const app = express();
 
@@ -159,7 +217,7 @@ const app = express();
 app.use((_req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (_req.method === "OPTIONS") {
     res.sendStatus(204);
     return;
@@ -173,24 +231,69 @@ app.use(express.json({ limit: "1mb" }));
 const publicDir = path.join(__dirname, "public");
 app.use(express.static(publicDir));
 
+// ── Auth routes ─────────────────────────────────────────────────────────────
+app.use("/api", createAuthRouter(db));
+
 // ── POST /api/upload ────────────────────────────────────────────────────────
 app.post("/api/upload", (req, res) => {
   try {
     const { nickname, sessions } = req.body;
 
-    if (!nickname || typeof nickname !== "string" || nickname.trim().length === 0) {
-      return res.status(400).json({ error: "nickname is required and must be a non-empty string" });
+    if (
+      !nickname ||
+      typeof nickname !== "string" ||
+      nickname.trim().length === 0
+    ) {
+      return res
+        .status(400)
+        .json({
+          error: "nickname is required and must be a non-empty string",
+        });
     }
     if (!Array.isArray(sessions)) {
       return res.status(400).json({ error: "sessions must be an array" });
     }
 
     const cleanNick = nickname.trim();
-    const totals = computeTotals(sessions);
     const now = Date.now();
 
-    // Merge models with existing data if present
-    const existingRow = db.prepare("SELECT models_used FROM uploads WHERE nickname = ?").get(cleanNick);
+    // Resolve uploader from auth header
+    const authHeader = req.headers.authorization;
+    const bearerToken =
+      authHeader && authHeader.startsWith("Bearer ")
+        ? authHeader.slice(7)
+        : null;
+    const uploaderGithubId = lookupGithubId(bearerToken);
+
+    // Look up existing row
+    const existingRow = db
+      .prepare("SELECT * FROM uploads WHERE nickname = ?")
+      .get(cleanNick);
+
+    // Parse existing session IDs
+    const existingIds = new Set(parseSessionIds(existingRow));
+
+    // Filter to truly new sessions
+    const newSessions = sessions.filter((s) => !existingIds.has(s.id));
+
+    if (newSessions.length === 0) {
+      // No new data — just touch time_uploaded
+      if (existingRow) {
+        db.prepare(
+          "UPDATE uploads SET time_uploaded = ?, uploader_github_id = COALESCE(?, uploader_github_id) WHERE nickname = ?",
+        ).run(now, uploaderGithubId, cleanNick);
+      }
+      return res.json({ status: "ok", sessions_uploaded: 0 });
+    }
+
+    // Merge session IDs
+    const allSessionIds = [...existingIds, ...newSessions.map((s) => s.id)];
+    const sessionIdsJson = JSON.stringify(allSessionIds);
+
+    // Compute totals for new sessions only
+    const totals = computeTotals(newSessions);
+
+    // Merge models with existing data
     let mergedModels;
     if (existingRow) {
       let existingModels = [];
@@ -199,9 +302,9 @@ app.post("/api/upload", (req, res) => {
       } catch {
         existingModels = [];
       }
-      mergedModels = mergeModels(existingModels, sessions);
+      mergedModels = mergeModels(existingModels, newSessions);
     } else {
-      mergedModels = computeModels(sessions);
+      mergedModels = computeModels(newSessions);
     }
 
     upsertStmt.run({
@@ -212,16 +315,112 @@ app.post("/api/upload", (req, res) => {
       total_cache_write: totals.total_cache_write,
       total_reasoning: totals.total_reasoning,
       total_cost: totals.total_cost,
-      session_count: sessions.length,
+      session_count: newSessions.length,
       models_used: JSON.stringify(mergedModels),
+      session_ids: sessionIdsJson,
+      uploader_github_id: uploaderGithubId,
       time_uploaded: now,
       time_from: totals.time_from ?? null,
       time_to: totals.time_to ?? null,
     });
 
-    return res.json({ status: "ok", sessions_uploaded: sessions.length });
+    return res.json({ status: "ok", sessions_uploaded: newSessions.length });
   } catch (err) {
     console.error("POST /api/upload error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── POST /api/upload/delta ──────────────────────────────────────────────────
+app.post("/api/upload/delta", (req, res) => {
+  try {
+    const {
+      nickname,
+      session_id,
+      delta_input,
+      delta_output,
+      delta_cache_read,
+      delta_cache_write,
+      delta_reasoning,
+      delta_cost,
+    } = req.body;
+
+    if (!nickname || typeof nickname !== "string") {
+      return res.status(400).json({ error: "nickname is required" });
+    }
+
+    const cleanNick = nickname.trim();
+    const now = Date.now();
+
+    const existingRow = db
+      .prepare("SELECT * FROM uploads WHERE nickname = ?")
+      .get(cleanNick);
+
+    let sessionIds = parseSessionIds(existingRow);
+    const sessionIdSet = new Set(sessionIds);
+    let sessionAdded = false;
+
+    if (session_id && !sessionIdSet.has(session_id)) {
+      sessionIds.push(session_id);
+      sessionAdded = true;
+    }
+
+    const di = delta_input || 0;
+    const dout = delta_output || 0;
+    const dcr = delta_cache_read || 0;
+    const dcw = delta_cache_write || 0;
+    const dr = delta_reasoning || 0;
+    const dc = delta_cost || 0;
+
+    if (existingRow) {
+      db.prepare(
+        `UPDATE uploads SET
+          total_input       = total_input       + ?,
+          total_output      = total_output      + ?,
+          total_cache_read  = total_cache_read  + ?,
+          total_cache_write = total_cache_write + ?,
+          total_reasoning   = total_reasoning   + ?,
+          total_cost        = total_cost        + ?,
+          session_count     = session_count     + ?,
+          session_ids       = ?,
+          time_uploaded     = ?
+        WHERE nickname = ?`,
+      ).run(
+        di,
+        dout,
+        dcr,
+        dcw,
+        dr,
+        dc,
+        sessionAdded ? 1 : 0,
+        JSON.stringify(sessionIds),
+        now,
+        cleanNick,
+      );
+    } else {
+      db.prepare(
+        `INSERT INTO uploads
+          (nickname, total_input, total_output, total_cache_read, total_cache_write,
+           total_reasoning, total_cost, session_count, session_ids, models_used,
+           time_uploaded)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?)`,
+      ).run(
+        cleanNick,
+        di,
+        dout,
+        dcr,
+        dcw,
+        dr,
+        dc,
+        sessionAdded ? 1 : 0,
+        JSON.stringify(sessionIds),
+        now,
+      );
+    }
+
+    return res.json({ status: "ok" });
+  } catch (err) {
+    console.error("POST /api/upload/delta error:", err);
     return res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -242,6 +441,11 @@ app.get("/api/leaderboard", (_req, res) => {
         return {
           nickname: row.nickname,
           total_tokens,
+          total_input: row.total_input,
+          total_output: row.total_output,
+          total_cache_read: row.total_cache_read,
+          total_cache_write: row.total_cache_write,
+          total_reasoning: row.total_reasoning,
           total_cost: row.total_cost || 0,
           session_count: row.session_count,
         };
@@ -278,7 +482,77 @@ app.get("/api/leaderboard/detailed", (_req, res) => {
   }
 });
 
+// ── GET /api/stats ──────────────────────────────────────────────────────────
+app.get("/api/stats", (_req, res) => {
+  try {
+    const rows = selectUploads.all();
+    const now = Date.now();
+    const day24 = now - 86400000;
+    const day7 = now - 604800000;
+
+    let total_tokens = 0;
+    let total_cost = 0;
+    let total_sessions = 0;
+    let active_24h = 0;
+    let active_7d = 0;
+
+    for (const row of rows) {
+      total_tokens +=
+        row.total_input +
+        row.total_output +
+        row.total_cache_read +
+        row.total_cache_write +
+        row.total_reasoning;
+      total_cost += row.total_cost || 0;
+      total_sessions += row.session_count || 0;
+
+      if (row.time_uploaded > day24) active_24h++;
+      if (row.time_uploaded > day7) active_7d++;
+    }
+
+    res.json({
+      total_tokens,
+      total_cost,
+      total_sessions,
+      active_users: rows.length,
+      active_24h,
+      active_7d,
+    });
+  } catch (err) {
+    console.error("GET /api/stats error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/pricing ────────────────────────────────────────────────────────
+app.get("/api/pricing", (req, res) => {
+  try {
+    const model = req.query.model;
+    if (!model) {
+      return res.status(400).json({ error: "model query parameter is required" });
+    }
+    const result = lookupPricing(model);
+    res.json(result);
+  } catch (err) {
+    console.error("GET /api/pricing error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// ── GET /api/cli/version ────────────────────────────────────────────────────
+app.get("/api/cli/version", (_req, res) => {
+  res.json({
+    latest: "2.0",
+    url: "https://raw.githubusercontent.com/dac63701/token-leaderboard/main/cli/token-leaderboard",
+    sha256: "",
+  });
+});
+
 // ── Start ───────────────────────────────────────────────────────────────────
+initPricingEngine().then(() => {
+  console.log("Pricing engine initialized");
+});
+
 app.listen(PORT, () => {
   console.log(`Token Leaderboard server running on http://localhost:${PORT}`);
 });

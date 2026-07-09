@@ -8,11 +8,17 @@
 set -o pipefail
 
 # ============================================================
+# Version
+# ============================================================
+SCRIPT_VERSION="2.0"
+
+# ============================================================
 # Paths
 # ============================================================
 CONFIG_DIR="${HOME}/.config/token-leaderboard"
 CONFIG_FILE="${CONFIG_DIR}/config"
 UPLOADED_FILE="${CONFIG_DIR}/uploaded"
+SESSION_STATE_FILE="${CONFIG_DIR}/session_state"
 DB="${HOME}/.local/share/opencode/opencode.db"
 
 # ============================================================
@@ -21,6 +27,9 @@ DB="${HOME}/.local/share/opencode/opencode.db"
 NICKNAME=""
 SERVER_URL="https://token.dac63701.com"
 AUTO=0
+AUTO_UPDATE=1
+AUTO_INTERVAL=60
+GITHUB_TOKEN=""
 
 # ============================================================
 # Flag defaults
@@ -29,19 +38,35 @@ HELP=false
 CONFIG_ONLY=false
 AUTO_MODE=false
 RESET_MODE=false
+VERSION_ONLY=false
+LOGIN_MODE=false
+UPDATE_MODE=false
+PRICING_MODE=false
+PRICING_MODEL=""
 
 # ============================================================
 # Parse flags
 # ============================================================
-for arg in "$@"; do
-  case "$arg" in
-    --help)    HELP=true ;;
-    --config)  CONFIG_ONLY=true ;;
-    --auto)    AUTO_MODE=true ;;
-    --reset)   RESET_MODE=true ;;
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --help)     HELP=true; shift ;;
+    --config)   CONFIG_ONLY=true; shift ;;
+    --auto)     AUTO_MODE=true; shift ;;
+    --reset)    RESET_MODE=true; shift ;;
+    --version)  VERSION_ONLY=true; shift ;;
+    --login)    LOGIN_MODE=true; shift ;;
+    --update)   UPDATE_MODE=true; shift ;;
+    --pricing)
+      PRICING_MODE=true
+      if [ $# -gt 1 ] && ! echo "$2" | grep -q "^--"; then
+        PRICING_MODEL="$2"
+        shift
+      fi
+      shift
+      ;;
     *)
-      echo "Unknown flag: $arg"
-      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset]"
+      echo "Unknown flag: $1"
+      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset] [--version] [--login] [--update] [--pricing [model]]"
       exit 1
       ;;
   esac
@@ -55,18 +80,26 @@ usage() {
 token-leaderboard — Upload OpenCode token usage to a leaderboard server.
 
 Usage:
-  token-leaderboard          Run interactively (prompts if config missing)
-  token-leaderboard --help   Show this help
-  token-leaderboard --config Print current configuration
-  token-leaderboard --auto   Run silently (only uploads if AUTO=1 in config)
-  token-leaderboard --reset  Clear uploaded sessions and re-upload everything
+  token-leaderboard                        Run interactively (prompts if config missing)
+  token-leaderboard --help                 Show this help
+  token-leaderboard --config               Print current configuration
+  token-leaderboard --auto                 Run silently in loop (requires AUTO=1 in config)
+  token-leaderboard --reset                Clear uploaded sessions and re-upload everything
+  token-leaderboard --version              Print version and exit
+  token-leaderboard --login                Authenticate with GitHub (device flow)
+  token-leaderboard --update               Self-update from server
+  token-leaderboard --pricing [model]      Show pricing info (all models or specific)
 
 Configuration: ~/.config/token-leaderboard/config
   NICKNAME=<your-name>
   SERVER_URL=<leaderboard-server-url>
   AUTO=0|1
+  AUTO_INTERVAL=<seconds>        (default 60)
+  AUTO_UPDATE=0|1                  (default 1)
+  GITHUB_TOKEN=<token>
 
 Uploaded sessions: ~/.config/token-leaderboard/uploaded
+Session state:     ~/.config/token-leaderboard/session_state
 EOF
 }
 
@@ -75,6 +108,14 @@ EOF
 # ============================================================
 if [ "$HELP" = true ]; then
   usage
+  exit 0
+fi
+
+# ============================================================
+# --version flag
+# ============================================================
+if [ "$VERSION_ONLY" = true ]; then
+  echo "token-leaderboard v${SCRIPT_VERSION}"
   exit 0
 fi
 
@@ -102,6 +143,22 @@ check_deps() {
 check_deps
 
 # ============================================================
+# JSON parsing helpers
+# ============================================================
+parse_json() {
+  local key="$1"
+  grep -o "\"$key\": *\"[^\"]*\"" | sed "s/.*\"$key\": *\"//;s/\"//"
+}
+parse_json_value() {
+  local key="$1"
+  grep -o "\"$key\": *[0-9.]*" | sed "s/.*\"$key\": *//"
+}
+parse_json_bool() {
+  local key="$1"
+  grep -o "\"$key\": *\(true\|false\)" | sed "s/.*\"$key\": *//"
+}
+
+# ============================================================
 # Config file operations
 # ============================================================
 load_config() {
@@ -118,6 +175,9 @@ print_config() {
   echo "NICKNAME=${NICKNAME:-}"
   echo "SERVER_URL=${SERVER_URL:-https://token.dac63701.com}"
   echo "AUTO=${AUTO:-0}"
+  echo "AUTO_INTERVAL=${AUTO_INTERVAL:-60}"
+  echo "AUTO_UPDATE=${AUTO_UPDATE:-1}"
+  echo "GITHUB_TOKEN=${GITHUB_TOKEN:+<set>}"
 }
 
 save_config() {
@@ -126,6 +186,9 @@ save_config() {
 NICKNAME=$1
 SERVER_URL=$2
 AUTO=$3
+AUTO_INTERVAL=${4:-60}
+AUTO_UPDATE=${5:-1}
+GITHUB_TOKEN=${6:-}
 EOF
   chmod 600 "$CONFIG_FILE"
 }
@@ -149,7 +212,13 @@ prompt_config() {
   read -r -p "Auto-upload on shell start? (0=no, 1=yes) [0]: " input_auto
   AUTO="${input_auto:-0}"
 
-  save_config "$NICKNAME" "$SERVER_URL" "$AUTO"
+  read -r -p "Upload interval in seconds [60]: " input_interval
+  AUTO_INTERVAL="${input_interval:-60}"
+
+  read -r -p "Auto-update CLI? (0=no, 1=yes) [1]: " input_auto_update
+  AUTO_UPDATE="${input_auto_update:-1}"
+
+  save_config "$NICKNAME" "$SERVER_URL" "$AUTO" "$AUTO_INTERVAL" "$AUTO_UPDATE" "$GITHUB_TOKEN"
   echo "Configuration saved to $CONFIG_FILE"
   echo ""
 }
@@ -169,15 +238,189 @@ if [ "$CONFIG_ONLY" = true ]; then
 fi
 
 # ============================================================
+# --login flag (GitHub device auth)
+# ============================================================
+if [ "$LOGIN_MODE" = true ]; then
+  load_config || true
+  SERVER_URL="${SERVER_URL%/}"
+
+  echo "Requesting device authorization code..."
+  auth_response=$(curl -s "$SERVER_URL/api/auth/github/device" 2>/dev/null)
+
+  user_code=$(echo "$auth_response" | parse_json "user_code")
+  device_code=$(echo "$auth_response" | parse_json "device_code")
+  verification_uri=$(echo "$auth_response" | parse_json "verification_uri")
+  interval=$(echo "$auth_response" | parse_json_value "interval")
+
+  if [ -z "$user_code" ] || [ -z "$device_code" ]; then
+    echo "Error: Failed to get device authorization code from server."
+    exit 1
+  fi
+
+  echo "Open this URL: ${verification_uri:-https://github.com/login/device}"
+  echo "Enter code: $user_code"
+  echo ""
+  echo "Waiting for authentication..."
+
+  interval="${interval:-5}"
+
+  while true; do
+    sleep "$interval"
+    poll_response=$(curl -s "$SERVER_URL/api/auth/github/poll" \
+      -H "Content-Type: application/json" \
+      -d "{\"device_code\":\"$device_code\"}" 2>/dev/null)
+
+    poll_status=$(echo "$poll_response" | parse_json "status")
+
+    if [ "$poll_status" = "complete" ] || [ -z "$poll_status" ]; then
+      token=$(echo "$poll_response" | parse_json "token")
+      nickname=$(echo "$poll_response" | parse_json "nickname")
+
+      if [ -n "$token" ]; then
+        GITHUB_TOKEN="$token"
+        NICKNAME="$nickname"
+        mkdir -p "$CONFIG_DIR"
+        save_config "$NICKNAME" "$SERVER_URL" "$AUTO" "$AUTO_INTERVAL" "$AUTO_UPDATE" "$GITHUB_TOKEN"
+        echo "✓ Authenticated as ${nickname}"
+        exit 0
+      fi
+    elif [ "$poll_status" = "expired" ]; then
+      echo "Error: Device code expired. Please run --login again."
+      exit 1
+    elif [ "$poll_status" = "pending" ]; then
+      continue
+    else
+      echo "Error: Unexpected response during polling."
+      exit 1
+    fi
+  done
+fi
+
+# ============================================================
+# --update flag (self-update)
+# ============================================================
+run_update() {
+  load_config || true
+  SERVER_URL="${SERVER_URL%/}"
+
+  echo "Checking for updates..."
+  update_response=$(curl -s "$SERVER_URL/api/cli/version" 2>/dev/null)
+
+  latest_version=$(echo "$update_response" | parse_json "latest")
+  download_url=$(echo "$update_response" | parse_json "url")
+  sha256_hash=$(echo "$update_response" | parse_json "sha256")
+
+  if [ -z "$latest_version" ] || [ -z "$download_url" ]; then
+    echo "Error: Failed to check for updates from server."
+    return 1
+  fi
+
+  if [ "$latest_version" = "$SCRIPT_VERSION" ]; then
+    echo "Already up to date (v${SCRIPT_VERSION})"
+    return 0
+  fi
+
+  echo "New version available: v${latest_version} (current: v${SCRIPT_VERSION})"
+
+  local tmp_file
+  tmp_file=$(mktemp /tmp/token-leaderboard.XXXXXX)
+
+  if ! curl -sL -o "$tmp_file" "$download_url" 2>/dev/null; then
+    echo "Error: Failed to download update."
+    rm -f "$tmp_file"
+    return 1
+  fi
+
+  if [ -n "$sha256_hash" ]; then
+    local actual_hash
+    actual_hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
+    if [ "$actual_hash" != "$sha256_hash" ]; then
+      echo "Error: SHA256 mismatch. Expected ${sha256_hash}, got ${actual_hash}."
+      rm -f "$tmp_file"
+      return 1
+    fi
+  fi
+
+  chmod +x "$tmp_file"
+
+  local script_path
+  script_path="$(command -v token-leaderboard 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
+  if echo "$script_path" | grep -q "^\."; then
+    script_path="$PWD/${script_path#./}"
+  fi
+
+  if ! mv "$tmp_file" "$script_path" 2>/dev/null; then
+    if command -v cp &>/dev/null && cp "$tmp_file" "$script_path" 2>/dev/null; then
+      rm -f "$tmp_file"
+    else
+      echo "Error: Could not replace script at $script_path. Try with sudo?"
+      rm -f "$tmp_file"
+      return 1
+    fi
+  fi
+
+  echo "✓ Updated to version ${latest_version}"
+  return 0
+}
+
+if [ "$UPDATE_MODE" = true ]; then
+  run_update
+  exit $?
+fi
+
+# ============================================================
+# --pricing flag
+# ============================================================
+if [ "$PRICING_MODE" = true ]; then
+  load_config || true
+  SERVER_URL="${SERVER_URL%/}"
+
+  if [ -n "$PRICING_MODEL" ]; then
+    encoded_model=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${PRICING_MODEL}'))" 2>/dev/null || echo "$PRICING_MODEL")
+    pricing_response=$(curl -s "${SERVER_URL}/api/pricing?model=${encoded_model}" 2>/dev/null)
+    pricing_model=$(echo "$pricing_response" | parse_json "model")
+    pricing_input=$(echo "$pricing_response" | parse_json_value "input")
+    pricing_output=$(echo "$pricing_response" | parse_json_value "output")
+    pricing_cache_read=$(echo "$pricing_response" | parse_json_value "cache_read")
+    pricing_cache_write=$(echo "$pricing_response" | parse_json_value "cache_write")
+
+    if [ -z "$pricing_model" ]; then
+      echo "No pricing data found for: ${PRICING_MODEL}"
+      exit 1
+    fi
+
+    printf "Model:        %s\n" "$pricing_model"
+    printf "Input:        $%.6f / 1K tokens\n" "${pricing_input:-0}"
+    printf "Output:       $%.6f / 1K tokens\n" "${pricing_output:-0}"
+    printf "Cache Read:   $%.6f / 1K tokens\n" "${pricing_cache_read:-0}"
+    printf "Cache Write:  $%.6f / 1K tokens\n" "${pricing_cache_write:-0}"
+  else
+    echo "Usage: token-leaderboard --pricing <model-id>"
+    echo ""
+    echo "Examples:"
+    echo "  token-leaderboard --pricing gpt-4o"
+    echo "  token-leaderboard --pricing claude-3-5-sonnet-20241022"
+    echo ""
+    echo "To list all available models, visit: ${SERVER_URL}/api/pricing?model=all"
+    echo "(Requires the pricing engine to be initialized on the server)"
+  fi
+
+  exit 0
+fi
+
+# ============================================================
 # Load or create config
 # ============================================================
 if [ "$AUTO_MODE" = true ]; then
-  # In auto mode, don't prompt — just load or exit
   if ! load_config; then
     exit 0
   fi
   if [ "${AUTO:-0}" != "1" ]; then
     exit 0
+  fi
+  # In auto mode, check for update if AUTO_UPDATE is enabled
+  if [ "${AUTO_UPDATE:-1}" = "1" ]; then
+    run_update >/dev/null 2>&1 || true
   fi
 else
   if ! load_config; then
@@ -194,6 +437,13 @@ if [ "$RESET_MODE" = true ]; then
     echo "Cleared uploaded sessions tracking. Will re-upload all sessions."
   else
     echo "No uploaded sessions file found. Nothing to reset."
+  fi
+  if [ -f "$SESSION_STATE_FILE" ]; then
+    rm -f "$SESSION_STATE_FILE"
+    echo "Cleared session state tracking."
+  fi
+  if [ "$AUTO_MODE" = false ]; then
+    exit 0
   fi
 fi
 
@@ -220,106 +470,32 @@ is_uploaded() {
 }
 
 # ============================================================
-# Query SQLite for sessions
+# Session state helpers
 # ============================================================
-# Fetch all sessions with token activity.
-# Use tab as separator and sanitize title to avoid separator conflicts.
-QUERY="
-SELECT
-  id,
-  IFNULL(json_extract(model, '$.id'), '') AS model_id,
-  IFNULL(json_extract(model, '$.providerID'), '') AS provider,
-  IFNULL(tokens_input, 0) AS tokens_input,
-  IFNULL(tokens_output, 0) AS tokens_output,
-  IFNULL(tokens_cache_read, 0) AS tokens_cache_read,
-  IFNULL(tokens_cache_write, 0) AS tokens_cache_write,
-  IFNULL(tokens_reasoning, 0) AS tokens_reasoning,
-  IFNULL(cost, 0) AS cost,
-  IFNULL(time_created, 0) AS time_created,
-  REPLACE(REPLACE(REPLACE(IFNULL(title,''), CHAR(9), ' '), CHAR(10), ' '), CHAR(13), ' ') AS title_clean
-FROM session
-WHERE tokens_input > 0
-   OR tokens_output > 0
-   OR tokens_cache_read > 0
-   OR tokens_cache_write > 0
-   OR tokens_reasoning > 0
-ORDER BY time_created ASC
-"
-
-# Read session data into arrays
-declare -a SESSION_IDS
-declare -a MODEL_IDS
-declare -a PROVIDERS
-declare -a TOKENS_INPUT
-declare -a TOKENS_OUTPUT
-declare -a TOKENS_CACHE_READ
-declare -a TOKENS_CACHE_WRITE
-declare -a TOKENS_REASONING
-declare -a COSTS
-declare -a TIMES_CREATED
-declare -a TITLES
-declare -a IS_NEW
-
-# Run the query, splitting on tab
-while IFS=$'\t' read -r id model_id provider ti to tcr tcw tr cost ts title_rest; do
-  # Skip if we didn't get a complete line
-  [ -z "$id" ] && continue
-
-  SESSION_IDS+=("$id")
-  MODEL_IDS+=("$model_id")
-  PROVIDERS+=("$provider")
-  TOKENS_INPUT+=("$ti")
-  TOKENS_OUTPUT+=("$to")
-  TOKENS_CACHE_READ+=("$tcr")
-  TOKENS_CACHE_WRITE+=("$tcw")
-  TOKENS_REASONING+=("$tr")
-  COSTS+=("$cost")
-  TIMES_CREATED+=("$ts")
-  TITLES+=("$title_rest")
-
-  # Check if already uploaded
-  if is_uploaded "$id"; then
-    IS_NEW+=("0")
-  else
-    IS_NEW+=("1")
+load_session_state() {
+  if [ -f "$SESSION_STATE_FILE" ]; then
+    cat "$SESSION_STATE_FILE"
   fi
-done < <(sqlite3 -separator $'\t' "$DB" "$QUERY" 2>/dev/null)
+}
 
-# ============================================================
-# Filter to new sessions only
-# ============================================================
-NEW_IDS=()
-NEW_MODEL_IDS=()
-NEW_PROVIDERS=()
-NEW_INPUT=()
-NEW_OUTPUT=()
-NEW_CACHE_READ=()
-NEW_CACHE_WRITE=()
-NEW_REASONING=()
-NEW_COSTS=()
-NEW_TIMES=()
-NEW_TITLES=()
+get_session_state() {
+  local sid="$1"
+  local state
+  state=$(load_session_state | grep "^${sid}|" 2>/dev/null)
+  echo "$state"
+}
 
-for i in "${!SESSION_IDS[@]}"; do
-  if [ "${IS_NEW[$i]}" = "1" ]; then
-    NEW_IDS+=("${SESSION_IDS[$i]}")
-    NEW_MODEL_IDS+=("${MODEL_IDS[$i]}")
-    NEW_PROVIDERS+=("${PROVIDERS[$i]}")
-    NEW_INPUT+=("${TOKENS_INPUT[$i]}")
-    NEW_OUTPUT+=("${TOKENS_OUTPUT[$i]}")
-    NEW_CACHE_READ+=("${TOKENS_CACHE_READ[$i]}")
-    NEW_CACHE_WRITE+=("${TOKENS_CACHE_WRITE[$i]}")
-    NEW_REASONING+=("${TOKENS_REASONING[$i]}")
-    NEW_COSTS+=("${COSTS[$i]}")
-    NEW_TIMES+=("${TIMES_CREATED[$i]}")
-    NEW_TITLES+=("${TITLES[$i]}")
+save_session_state_line() {
+  local sid="$1" ti="$2" to="$3" tcr="$4" tcw="$5" tr="$6" ts="$7"
+  mkdir -p "$CONFIG_DIR"
+  if grep -q "^${sid}|" "$SESSION_STATE_FILE" 2>/dev/null; then
+    local tmp
+    tmp=$(mktemp /tmp/tl-state.XXXXXX)
+    grep -v "^${sid}|" "$SESSION_STATE_FILE" > "$tmp" 2>/dev/null
+    mv "$tmp" "$SESSION_STATE_FILE"
   fi
-done
-
-if [ ${#NEW_IDS[@]} -eq 0 ]; then
-  echo "No new sessions to upload"
-  exit 0
-fi
+  echo "${sid}|${ti}|${to}|${tcr}|${tcw}|${tr}|${ts}" >> "$SESSION_STATE_FILE"
+}
 
 # ============================================================
 # JSON escape helper
@@ -328,97 +504,218 @@ json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
-  # Replace control characters with space (tabs, newlines, etc.)
   s=$(printf '%s' "$s" | tr '\t\n\r' '   ')
   printf '%s' "$s"
 }
 
 # ============================================================
-# Build JSON payload
+# Upload cycle: query DB → filter → build JSON → upload
 # ============================================================
-build_json() {
+run_upload_cycle() {
+  local QUERY="
+  SELECT
+    id,
+    IFNULL(json_extract(model, '$.id'), '') AS model_id,
+    IFNULL(json_extract(model, '$.providerID'), '') AS provider,
+    IFNULL(tokens_input, 0) AS tokens_input,
+    IFNULL(tokens_output, 0) AS tokens_output,
+    IFNULL(tokens_cache_read, 0) AS tokens_cache_read,
+    IFNULL(tokens_cache_write, 0) AS tokens_cache_write,
+    IFNULL(tokens_reasoning, 0) AS tokens_reasoning,
+    IFNULL(cost, 0) AS cost,
+    IFNULL(time_created, 0) AS time_created,
+    IFNULL(time_updated, 0) AS time_updated,
+    REPLACE(REPLACE(REPLACE(IFNULL(title,''), CHAR(9), ' '), CHAR(10), ' '), CHAR(13), ' ') AS title_clean
+  FROM session
+  WHERE tokens_input > 0
+     OR tokens_output > 0
+     OR tokens_cache_read > 0
+     OR tokens_cache_write > 0
+     OR tokens_reasoning > 0
+  ORDER BY time_created ASC
+  "
+
+  SESSION_IDS=()
+  MODEL_IDS=()
+  PROVIDERS=()
+  TOKENS_INPUT=()
+  TOKENS_OUTPUT=()
+  TOKENS_CACHE_READ=()
+  TOKENS_CACHE_WRITE=()
+  TOKENS_REASONING=()
+  COSTS=()
+  TIMES_CREATED=()
+  TIMES_UPDATED=()
+  TITLES=()
+  IS_NEW=()
+  IS_DELTA=()
+
+  while IFS=$'\t' read -r id model_id provider ti to tcr tcw tr cost ts_tc ts_tu title_rest; do
+    [ -z "$id" ] && continue
+
+    SESSION_IDS+=("$id")
+    MODEL_IDS+=("$model_id")
+    PROVIDERS+=("$provider")
+    TOKENS_INPUT+=("$ti")
+    TOKENS_OUTPUT+=("$to")
+    TOKENS_CACHE_READ+=("$tcr")
+    TOKENS_CACHE_WRITE+=("$tcw")
+    TOKENS_REASONING+=("$tr")
+    COSTS+=("$cost")
+    TIMES_CREATED+=("$ts_tc")
+    TIMES_UPDATED+=("$ts_tu")
+    TITLES+=("$title_rest")
+
+    if is_uploaded "$id"; then
+      IS_NEW+=("0")
+      local state_line
+      state_line=$(get_session_state "$id")
+      if [ -n "$state_line" ]; then
+        local old_ti old_to old_tcr old_tcw old_tr old_ts
+        old_ti=$(echo "$state_line" | cut -d'|' -f2)
+        old_to=$(echo "$state_line" | cut -d'|' -f3)
+        old_tcr=$(echo "$state_line" | cut -d'|' -f4)
+        old_tcw=$(echo "$state_line" | cut -d'|' -f5)
+        old_tr=$(echo "$state_line" | cut -d'|' -f6)
+        old_ts=$(echo "$state_line" | cut -d'|' -f7)
+        if [ "$ts_tu" != "$old_ts" ] && { [ "$ti" != "$old_ti" ] || [ "$to" != "$old_to" ] || [ "$tcr" != "$old_tcr" ] || [ "$tcw" != "$old_tcw" ] || [ "$tr" != "$old_tr" ]; }; then
+          IS_DELTA+=("1")
+        else
+          IS_DELTA+=("0")
+        fi
+      else
+        IS_DELTA+=("0")
+      fi
+    else
+      IS_NEW+=("1")
+      IS_DELTA+=("0")
+    fi
+  done < <(sqlite3 -separator $'\t' "$DB" "$QUERY" 2>/dev/null)
+
+  UPLOAD_IDS=()
+  UPLOAD_MODEL_IDS=()
+  UPLOAD_PROVIDERS=()
+  UPLOAD_INPUT=()
+  UPLOAD_OUTPUT=()
+  UPLOAD_CACHE_READ=()
+  UPLOAD_CACHE_WRITE=()
+  UPLOAD_REASONING=()
+  UPLOAD_COSTS=()
+  UPLOAD_TIMES=()
+  UPLOAD_TITLES=()
+  UPLOAD_IS_DELTA=()
+  UPLOAD_TIMES_UPDATED=()
+
+  for i in "${!SESSION_IDS[@]}"; do
+    if [ "${IS_NEW[$i]}" = "1" ] || [ "${IS_DELTA[$i]}" = "1" ]; then
+      UPLOAD_IDS+=("${SESSION_IDS[$i]}")
+      UPLOAD_MODEL_IDS+=("${MODEL_IDS[$i]}")
+      UPLOAD_PROVIDERS+=("${PROVIDERS[$i]}")
+      UPLOAD_INPUT+=("${TOKENS_INPUT[$i]}")
+      UPLOAD_OUTPUT+=("${TOKENS_OUTPUT[$i]}")
+      UPLOAD_CACHE_READ+=("${TOKENS_CACHE_READ[$i]}")
+      UPLOAD_CACHE_WRITE+=("${TOKENS_CACHE_WRITE[$i]}")
+      UPLOAD_REASONING+=("${TOKENS_REASONING[$i]}")
+      UPLOAD_COSTS+=("${COSTS[$i]}")
+      UPLOAD_TIMES+=("${TIMES_CREATED[$i]}")
+      UPLOAD_TITLES+=("${TITLES[$i]}")
+      UPLOAD_IS_DELTA+=("${IS_DELTA[$i]}")
+      UPLOAD_TIMES_UPDATED+=("${TIMES_UPDATED[$i]}")
+    fi
+  done
+
+  if [ ${#UPLOAD_IDS[@]} -eq 0 ]; then
+    if [ "$AUTO_MODE" = false ]; then
+      echo "No sessions to upload"
+    fi
+    return 0
+  fi
+
+  # Build JSON payload
   local nickname_escaped
   nickname_escaped=$(json_escape "$NICKNAME")
-
   local json="{\"nickname\":\"${nickname_escaped}\",\"sessions\":["
-
   local first=true
-  for i in "${!NEW_IDS[@]}"; do
-    local id_escaped
-    local model_id_escaped
-    local provider_escaped
-    local title_escaped
-
-    id_escaped=$(json_escape "${NEW_IDS[$i]}")
-    model_id_escaped=$(json_escape "${NEW_MODEL_IDS[$i]}")
-    provider_escaped=$(json_escape "${NEW_PROVIDERS[$i]}")
-    title_escaped=$(json_escape "${NEW_TITLES[$i]}")
-
-    if [ "$first" = true ]; then
-      first=false
-    else
-      json+=","
-    fi
-
-    json+="{"
-    json+="\"id\":\"${id_escaped}\""
+  for i in "${!UPLOAD_IDS[@]}"; do
+    local id_escaped model_id_escaped provider_escaped title_escaped
+    id_escaped=$(json_escape "${UPLOAD_IDS[$i]}")
+    model_id_escaped=$(json_escape "${UPLOAD_MODEL_IDS[$i]}")
+    provider_escaped=$(json_escape "${UPLOAD_PROVIDERS[$i]}")
+    title_escaped=$(json_escape "${UPLOAD_TITLES[$i]}")
+    if [ "$first" = true ]; then first=false; else json+=","; fi
+    json+="{\"id\":\"${id_escaped}\""
     json+=",\"model_id\":\"${model_id_escaped}\""
     json+=",\"provider\":\"${provider_escaped}\""
-    json+=",\"input\":${NEW_INPUT[$i]}"
-    json+=",\"output\":${NEW_OUTPUT[$i]}"
-    json+=",\"cache_read\":${NEW_CACHE_READ[$i]}"
-    json+=",\"cache_write\":${NEW_CACHE_WRITE[$i]}"
-    json+=",\"reasoning\":${NEW_REASONING[$i]}"
-    json+=",\"cost\":${NEW_COSTS[$i]}"
-    json+=",\"time_created\":${NEW_TIMES[$i]}"
+    json+=",\"input\":${UPLOAD_INPUT[$i]}"
+    json+=",\"output\":${UPLOAD_OUTPUT[$i]}"
+    json+=",\"cache_read\":${UPLOAD_CACHE_READ[$i]}"
+    json+=",\"cache_write\":${UPLOAD_CACHE_WRITE[$i]}"
+    json+=",\"reasoning\":${UPLOAD_REASONING[$i]}"
+    json+=",\"cost\":${UPLOAD_COSTS[$i]}"
+    json+=",\"time_created\":${UPLOAD_TIMES[$i]}"
     json+=",\"title\":\"${title_escaped}\""
+    if [ "${UPLOAD_IS_DELTA[$i]}" = "1" ]; then
+      json+=",\"delta\":true"
+    fi
     json+="}"
   done
-
   json+="]}"
-  printf '%s' "$json"
-}
 
-PAYLOAD=$(build_json)
-
-# ============================================================
-# Upload
-# ============================================================
-upload_endpoint="${SERVER_URL}/api/upload"
-
-if [ "$AUTO_MODE" = true ]; then
-  # Silent upload — no output on success
-  response=$(curl -s -w "\n%{http_code}" -X POST \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD" \
-    "$upload_endpoint" 2>/dev/null)
-else
-  echo "Uploading ${#NEW_IDS[@]} session(s) to ${upload_endpoint}..."
-  response=$(curl -s -w "\n%{http_code}" -X POST \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD" \
-    "$upload_endpoint" 2>/dev/null)
-fi
-
-# Extract HTTP status code and body
-http_code=$(echo "$response" | tail -1)
-body=$(echo "$response" | sed '$d')
-
-if [ "$http_code" = "200" ]; then
-  # Success — save session IDs to uploaded file
-  mkdir -p "$CONFIG_DIR"
-  for session_id in "${NEW_IDS[@]}"; do
-    echo "$session_id" >> "$UPLOADED_FILE"
-  done
+  # Upload
+  local upload_endpoint="${SERVER_URL}/api/upload"
+  local auth_header=""
+  if [ -n "$GITHUB_TOKEN" ]; then
+    auth_header="-H \"Authorization: Bearer ${GITHUB_TOKEN}\""
+  fi
 
   if [ "$AUTO_MODE" = false ]; then
-    echo "Upload successful! ${#NEW_IDS[@]} session(s) uploaded."
+    echo "Uploading ${#UPLOAD_IDS[@]} session(s) to ${upload_endpoint}..."
   fi
-  exit 0
+
+  local response
+  response=$(eval curl -s -w \"\\n%{http_code}\" -X POST \
+    -H "Content-Type: application/json" \
+    $auth_header \
+    -d "$json" \
+    "$upload_endpoint" 2>/dev/null)
+
+  local http_code body
+  http_code=$(echo "$response" | tail -1)
+  body=$(echo "$response" | sed '$d')
+
+  if [ "$http_code" = "200" ]; then
+    mkdir -p "$CONFIG_DIR"
+    for i in "${!UPLOAD_IDS[@]}"; do
+      echo "${UPLOAD_IDS[$i]}" >> "$UPLOADED_FILE"
+      save_session_state_line \
+        "${UPLOAD_IDS[$i]}" \
+        "${UPLOAD_INPUT[$i]}" \
+        "${UPLOAD_OUTPUT[$i]}" \
+        "${UPLOAD_CACHE_READ[$i]}" \
+        "${UPLOAD_CACHE_WRITE[$i]}" \
+        "${UPLOAD_REASONING[$i]}" \
+        "${UPLOAD_TIMES_UPDATED[$i]}"
+    done
+    if [ "$AUTO_MODE" = false ]; then
+      echo "Upload successful! ${#UPLOAD_IDS[@]} session(s) uploaded."
+    fi
+    return 0
+  else
+    echo "Error: Server returned HTTP ${http_code}"
+    if [ -n "$body" ]; then echo "Response: $body"; fi
+    return 1
+  fi
+}
+
+# ============================================================
+# Main: run once (interactive) or loop (auto)
+# ============================================================
+if [ "$AUTO_MODE" = true ]; then
+  while true; do
+    run_upload_cycle
+    sleep "${AUTO_INTERVAL:-60}"
+  done
 else
-  echo "Error: Server returned HTTP ${http_code}"
-  if [ -n "$body" ]; then
-    echo "Response: $body"
-  fi
-  exit 1
+  run_upload_cycle
+  exit $?
 fi

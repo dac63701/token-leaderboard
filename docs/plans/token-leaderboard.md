@@ -22,4 +22,5 @@ Build a minimal token leaderboard system with two parts: (1) a bash CLI script t
 ## Required Specs
 <!-- SPECS_START -->
 - leaderboard-spec
+- reset-fix-ui
 <!-- SPECS_END -->
