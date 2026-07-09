@@ -1,0 +1,24 @@
+version: '3.8'
+
+networks:
+  tl-net:
+    name: token-leaderboard-net
+    driver: bridge
+
+services:
+  leaderboard:
+    image: dac63701/token-leaderboard:latest
+    container_name: token-leaderboard
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    environment:
+      - PORT=3456
+      - NODE_ENV=production
+    volumes:
+      - tl-data:/app/data
+    networks:
+      - tl-net
+
+volumes:
+  tl-data:

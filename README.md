@@ -121,6 +121,37 @@ Pull the latest image anytime:
 docker run -d -p 3456:3456 dac63701/token-leaderboard
 ```
 
+### Docker Compose (Portainer-ready)
+
+```yaml
+version: '3.8'
+
+networks:
+  tl-net:
+    name: token-leaderboard-net
+    driver: bridge
+
+services:
+  leaderboard:
+    image: dac63701/token-leaderboard:latest
+    container_name: token-leaderboard
+    restart: unless-stopped
+    ports:
+      - "3456:3456"
+    environment:
+      - PORT=3456
+      - NODE_ENV=production
+    volumes:
+      - tl-data:/app/data
+    networks:
+      - tl-net
+
+volumes:
+  tl-data:
+```
+
+Deploy in Portainer as a stack.
+
 ## Deploying the Server
 
 The server is a single Node.js process. Deploy anywhere that supports Node 18+:
