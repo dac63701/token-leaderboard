@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Token Leaderboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>Token Leaderboard</h1>
+      <span id="nickname-display" class="nickname-display"></span>
+    </div>
+    <nav class="tabs">
+      <button class="tab active" data-tab="home">Home</button>
+      <button class="tab" data-tab="detailed">Detailed</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Home Tab -->
+    <div id="tab-home" class="tab-content active">
+      <h2 class="tab-title">Leaderboard</h2>
+      <div id="home-loading" class="loading">Loading...</div>
+      <div id="home-error" class="message error hidden"></div>
+      <div id="home-table-container"></div>
+    </div>
+
+    <!-- Detailed Tab -->
+    <div id="tab-detailed" class="tab-content">
+      <h2 class="tab-title">Per-Model Breakdown</h2>
+      <div id="detailed-loading" class="loading">Loading...</div>
+      <div id="detailed-error" class="message error hidden"></div>
+      <div id="detailed-table-container"></div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="footer-left">
+      <span id="refresh-indicator">Auto-refreshing in 60s…</span>
+    </div>
+    <div class="footer-right">
+      <button id="refresh-btn" class="btn-refresh">Refresh Now</button>
+    </div>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

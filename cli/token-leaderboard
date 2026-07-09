@@ -1,0 +1,424 @@
+#!/usr/bin/env bash
+
+# token-leaderboard - CLI tool to read OpenCode's local SQLite DB
+# and upload token usage to a leaderboard server.
+#
+# Dependencies: sqlite3, curl (zero additional deps)
+
+set -o pipefail
+
+# ============================================================
+# Paths
+# ============================================================
+CONFIG_DIR="${HOME}/.config/token-leaderboard"
+CONFIG_FILE="${CONFIG_DIR}/config"
+UPLOADED_FILE="${CONFIG_DIR}/uploaded"
+DB="${HOME}/.local/share/opencode/opencode.db"
+
+# ============================================================
+# Defaults
+# ============================================================
+NICKNAME=""
+SERVER_URL="http://localhost:3456"
+AUTO=0
+
+# ============================================================
+# Flag defaults
+# ============================================================
+HELP=false
+CONFIG_ONLY=false
+AUTO_MODE=false
+RESET_MODE=false
+
+# ============================================================
+# Parse flags
+# ============================================================
+for arg in "$@"; do
+  case "$arg" in
+    --help)    HELP=true ;;
+    --config)  CONFIG_ONLY=true ;;
+    --auto)    AUTO_MODE=true ;;
+    --reset)   RESET_MODE=true ;;
+    *)
+      echo "Unknown flag: $arg"
+      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset]"
+      exit 1
+      ;;
+  esac
+done
+
+# ============================================================
+# Helper: print usage
+# ============================================================
+usage() {
+  cat <<'EOF'
+token-leaderboard — Upload OpenCode token usage to a leaderboard server.
+
+Usage:
+  token-leaderboard          Run interactively (prompts if config missing)
+  token-leaderboard --help   Show this help
+  token-leaderboard --config Print current configuration
+  token-leaderboard --auto   Run silently (only uploads if AUTO=1 in config)
+  token-leaderboard --reset  Clear uploaded sessions and re-upload everything
+
+Configuration: ~/.config/token-leaderboard/config
+  NICKNAME=<your-name>
+  SERVER_URL=<leaderboard-server-url>
+  AUTO=0|1
+
+Uploaded sessions: ~/.config/token-leaderboard/uploaded
+EOF
+}
+
+# ============================================================
+# --help flag
+# ============================================================
+if [ "$HELP" = true ]; then
+  usage
+  exit 0
+fi
+
+# ============================================================
+# Dependencies check
+# ============================================================
+check_deps() {
+  local missing=false
+
+  if ! command -v sqlite3 &>/dev/null; then
+    echo "Error: sqlite3 not found. Please install sqlite3 first."
+    missing=true
+  fi
+
+  if ! command -v curl &>/dev/null; then
+    echo "Error: curl not found. Please install curl first."
+    missing=true
+  fi
+
+  if [ "$missing" = true ]; then
+    exit 1
+  fi
+}
+
+check_deps
+
+# ============================================================
+# Config file operations
+# ============================================================
+load_config() {
+  if [ -f "$CONFIG_FILE" ]; then
+    # shellcheck source=/dev/null
+    source "$CONFIG_FILE"
+    return 0
+  fi
+  return 1
+}
+
+print_config() {
+  load_config || true
+  echo "NICKNAME=${NICKNAME:-}"
+  echo "SERVER_URL=${SERVER_URL:-http://localhost:3456}"
+  echo "AUTO=${AUTO:-0}"
+}
+
+save_config() {
+  mkdir -p "$CONFIG_DIR"
+  cat > "$CONFIG_FILE" <<EOF
+NICKNAME=$1
+SERVER_URL=$2
+AUTO=$3
+EOF
+  chmod 600 "$CONFIG_FILE"
+}
+
+prompt_config() {
+  local default_nickname
+  default_nickname=$(hostname 2>/dev/null || echo "unknown")
+
+  echo "=== Token Leaderboard Configuration ==="
+  echo ""
+
+  read -r -p "Enter your nickname [${default_nickname}]: " input_nickname
+  NICKNAME="${input_nickname:-$default_nickname}"
+
+  read -r -p "Enter server URL [${SERVER_URL}]: " input_url
+  SERVER_URL="${input_url:-$SERVER_URL}"
+
+  # Strip trailing slash
+  SERVER_URL="${SERVER_URL%/}"
+
+  read -r -p "Auto-upload on shell start? (0=no, 1=yes) [0]: " input_auto
+  AUTO="${input_auto:-0}"
+
+  save_config "$NICKNAME" "$SERVER_URL" "$AUTO"
+  echo "Configuration saved to $CONFIG_FILE"
+  echo ""
+}
+
+# ============================================================
+# --config flag
+# ============================================================
+if [ "$CONFIG_ONLY" = true ]; then
+  if [ -f "$CONFIG_FILE" ]; then
+    print_config
+    exit 0
+  else
+    echo "Config not found at $CONFIG_FILE"
+    echo "Run 'token-leaderboard' to create it."
+    exit 1
+  fi
+fi
+
+# ============================================================
+# Load or create config
+# ============================================================
+if [ "$AUTO_MODE" = true ]; then
+  # In auto mode, don't prompt — just load or exit
+  if ! load_config; then
+    exit 0
+  fi
+  if [ "${AUTO:-0}" != "1" ]; then
+    exit 0
+  fi
+else
+  if ! load_config; then
+    prompt_config
+  fi
+fi
+
+# ============================================================
+# --reset flag: clear uploaded sessions
+# ============================================================
+if [ "$RESET_MODE" = true ]; then
+  if [ -f "$UPLOADED_FILE" ]; then
+    rm -f "$UPLOADED_FILE"
+    echo "Cleared uploaded sessions tracking. Will re-upload all sessions."
+  else
+    echo "No uploaded sessions file found. Nothing to reset."
+  fi
+fi
+
+# Strip trailing slash from SERVER_URL (in case it was set manually)
+SERVER_URL="${SERVER_URL%/}"
+
+# ============================================================
+# Check DB exists
+# ============================================================
+if [ ! -f "$DB" ]; then
+  echo "OpenCode DB not found at ${DB}"
+  exit 1
+fi
+
+# ============================================================
+# Helper: check if session ID already uploaded
+# ============================================================
+is_uploaded() {
+  local sid="$1"
+  if [ ! -f "$UPLOADED_FILE" ]; then
+    return 1
+  fi
+  grep -Fxq "$sid" "$UPLOADED_FILE" 2>/dev/null
+}
+
+# ============================================================
+# Query SQLite for sessions
+# ============================================================
+# Fetch all sessions with token activity.
+# Use tab as separator and sanitize title to avoid separator conflicts.
+QUERY="
+SELECT
+  id,
+  IFNULL(json_extract(model, '$.id'), '') AS model_id,
+  IFNULL(json_extract(model, '$.providerID'), '') AS provider,
+  IFNULL(tokens_input, 0) AS tokens_input,
+  IFNULL(tokens_output, 0) AS tokens_output,
+  IFNULL(tokens_cache_read, 0) AS tokens_cache_read,
+  IFNULL(tokens_cache_write, 0) AS tokens_cache_write,
+  IFNULL(tokens_reasoning, 0) AS tokens_reasoning,
+  IFNULL(cost, 0) AS cost,
+  IFNULL(time_created, 0) AS time_created,
+  REPLACE(REPLACE(REPLACE(IFNULL(title,''), CHAR(9), ' '), CHAR(10), ' '), CHAR(13), ' ') AS title_clean
+FROM session
+WHERE tokens_input > 0
+   OR tokens_output > 0
+   OR tokens_cache_read > 0
+   OR tokens_cache_write > 0
+   OR tokens_reasoning > 0
+ORDER BY time_created ASC
+"
+
+# Read session data into arrays
+declare -a SESSION_IDS
+declare -a MODEL_IDS
+declare -a PROVIDERS
+declare -a TOKENS_INPUT
+declare -a TOKENS_OUTPUT
+declare -a TOKENS_CACHE_READ
+declare -a TOKENS_CACHE_WRITE
+declare -a TOKENS_REASONING
+declare -a COSTS
+declare -a TIMES_CREATED
+declare -a TITLES
+declare -a IS_NEW
+
+# Run the query, splitting on tab
+while IFS=$'\t' read -r id model_id provider ti to tcr tcw tr cost ts title_rest; do
+  # Skip if we didn't get a complete line
+  [ -z "$id" ] && continue
+
+  SESSION_IDS+=("$id")
+  MODEL_IDS+=("$model_id")
+  PROVIDERS+=("$provider")
+  TOKENS_INPUT+=("$ti")
+  TOKENS_OUTPUT+=("$to")
+  TOKENS_CACHE_READ+=("$tcr")
+  TOKENS_CACHE_WRITE+=("$tcw")
+  TOKENS_REASONING+=("$tr")
+  COSTS+=("$cost")
+  TIMES_CREATED+=("$ts")
+  TITLES+=("$title_rest")
+
+  # Check if already uploaded
+  if is_uploaded "$id"; then
+    IS_NEW+=("0")
+  else
+    IS_NEW+=("1")
+  fi
+done < <(sqlite3 -separator $'\t' "$DB" "$QUERY" 2>/dev/null)
+
+# ============================================================
+# Filter to new sessions only
+# ============================================================
+NEW_IDS=()
+NEW_MODEL_IDS=()
+NEW_PROVIDERS=()
+NEW_INPUT=()
+NEW_OUTPUT=()
+NEW_CACHE_READ=()
+NEW_CACHE_WRITE=()
+NEW_REASONING=()
+NEW_COSTS=()
+NEW_TIMES=()
+NEW_TITLES=()
+
+for i in "${!SESSION_IDS[@]}"; do
+  if [ "${IS_NEW[$i]}" = "1" ]; then
+    NEW_IDS+=("${SESSION_IDS[$i]}")
+    NEW_MODEL_IDS+=("${MODEL_IDS[$i]}")
+    NEW_PROVIDERS+=("${PROVIDERS[$i]}")
+    NEW_INPUT+=("${TOKENS_INPUT[$i]}")
+    NEW_OUTPUT+=("${TOKENS_OUTPUT[$i]}")
+    NEW_CACHE_READ+=("${TOKENS_CACHE_READ[$i]}")
+    NEW_CACHE_WRITE+=("${TOKENS_CACHE_WRITE[$i]}")
+    NEW_REASONING+=("${TOKENS_REASONING[$i]}")
+    NEW_COSTS+=("${COSTS[$i]}")
+    NEW_TIMES+=("${TIMES_CREATED[$i]}")
+    NEW_TITLES+=("${TITLES[$i]}")
+  fi
+done
+
+if [ ${#NEW_IDS[@]} -eq 0 ]; then
+  echo "No new sessions to upload"
+  exit 0
+fi
+
+# ============================================================
+# JSON escape helper
+# ============================================================
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  # Replace control characters with space (tabs, newlines, etc.)
+  s=$(printf '%s' "$s" | tr '\t\n\r' '   ')
+  printf '%s' "$s"
+}
+
+# ============================================================
+# Build JSON payload
+# ============================================================
+build_json() {
+  local nickname_escaped
+  nickname_escaped=$(json_escape "$NICKNAME")
+
+  local json="{\"nickname\":\"${nickname_escaped}\",\"sessions\":["
+
+  local first=true
+  for i in "${!NEW_IDS[@]}"; do
+    local id_escaped
+    local model_id_escaped
+    local provider_escaped
+    local title_escaped
+
+    id_escaped=$(json_escape "${NEW_IDS[$i]}")
+    model_id_escaped=$(json_escape "${NEW_MODEL_IDS[$i]}")
+    provider_escaped=$(json_escape "${NEW_PROVIDERS[$i]}")
+    title_escaped=$(json_escape "${NEW_TITLES[$i]}")
+
+    if [ "$first" = true ]; then
+      first=false
+    else
+      json+=","
+    fi
+
+    json+="{"
+    json+="\"id\":\"${id_escaped}\""
+    json+=",\"model_id\":\"${model_id_escaped}\""
+    json+=",\"provider\":\"${provider_escaped}\""
+    json+=",\"input\":${NEW_INPUT[$i]}"
+    json+=",\"output\":${NEW_OUTPUT[$i]}"
+    json+=",\"cache_read\":${NEW_CACHE_READ[$i]}"
+    json+=",\"cache_write\":${NEW_CACHE_WRITE[$i]}"
+    json+=",\"reasoning\":${NEW_REASONING[$i]}"
+    json+=",\"cost\":${NEW_COSTS[$i]}"
+    json+=",\"time_created\":${NEW_TIMES[$i]}"
+    json+=",\"title\":\"${title_escaped}\""
+    json+="}"
+  done
+
+  json+="]}"
+  printf '%s' "$json"
+}
+
+PAYLOAD=$(build_json)
+
+# ============================================================
+# Upload
+# ============================================================
+upload_endpoint="${SERVER_URL}/api/upload"
+
+if [ "$AUTO_MODE" = true ]; then
+  # Silent upload — no output on success
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" \
+    "$upload_endpoint" 2>/dev/null)
+else
+  echo "Uploading ${#NEW_IDS[@]} session(s) to ${upload_endpoint}..."
+  response=$(curl -s -w "\n%{http_code}" -X POST \
+    -H "Content-Type: application/json" \
+    -d "$PAYLOAD" \
+    "$upload_endpoint" 2>/dev/null)
+fi
+
+# Extract HTTP status code and body
+http_code=$(echo "$response" | tail -1)
+body=$(echo "$response" | sed '$d')
+
+if [ "$http_code" = "200" ]; then
+  # Success — save session IDs to uploaded file
+  mkdir -p "$CONFIG_DIR"
+  for session_id in "${NEW_IDS[@]}"; do
+    echo "$session_id" >> "$UPLOADED_FILE"
+  done
+
+  if [ "$AUTO_MODE" = false ]; then
+    echo "Upload successful! ${#NEW_IDS[@]} session(s) uploaded."
+  fi
+  exit 0
+else
+  echo "Error: Server returned HTTP ${http_code}"
+  if [ -n "$body" ]; then
+    echo "Response: $body"
+  fi
+  exit 1
+fi

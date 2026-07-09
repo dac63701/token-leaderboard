@@ -1,0 +1,7 @@
+node_modules/
+server/leaderboard.db
+server/leaderboard.db-wal
+server/leaderboard.db-shm
+.slim/
+.DS_Store
+*.log

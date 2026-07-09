@@ -1,0 +1,167 @@
+# Token Leaderboard
+
+A lightweight token usage leaderboard for OpenCode users. Track how many tokens you and your friends are burning through.
+
+**Two parts:**
+- **CLI** — a single bash script that reads OpenCode's local SQLite DB and uploads token usage to a leaderboard server
+- **Server** — a lightweight Express + SQLite web server with a two-tab dashboard
+
+## Quick Start
+
+### 1. Install the CLI
+
+```bash
+git clone https://github.com/YOUR_USERNAME/token-leaderboard.git
+cd token-leaderboard
+./install.sh
+```
+
+Or copy manually:
+
+```bash
+cp cli/token-leaderboard ~/.local/bin/
+chmod +x ~/.local/bin/token-leaderboard
+```
+
+### 2. Start the server
+
+```bash
+cd server
+npm install
+npm start
+```
+
+Open http://localhost:3456 in your browser.
+
+### 3. Upload your tokens
+
+```bash
+token-leaderboard
+```
+
+On first run, you'll be prompted for a nickname and server URL. After that, it reads your OpenCode database and uploads all new sessions.
+
+## Usage
+
+```bash
+token-leaderboard           # Upload new sessions (interactive)
+token-leaderboard --auto    # Upload silently (for shell hooks / cron)
+token-leaderboard --config  # Show current configuration
+token-leaderboard --reset   # Clear uploaded sessions, re-upload everything
+token-leaderboard --help    # Show help
+```
+
+## Auto-upload on Shell Start
+
+Add to your `.zshrc` or `.bashrc`:
+
+```bash
+# Token Leaderboard auto-upload
+[[ -f ~/.local/bin/token-leaderboard ]] && source <(token-leaderboard --auto)
+```
+
+The `install.sh` wizard can do this for you automatically.
+
+## Configuration
+
+Stored at `~/.config/token-leaderboard/config`:
+
+```
+NICKNAME=my-name
+SERVER_URL=http://localhost:3456
+AUTO=0
+```
+
+## Server API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/upload` | Upload token usage data |
+| GET | `/api/leaderboard` | Ranked leaderboard (total tokens) |
+| GET | `/api/leaderboard/detailed` | Per-model breakdown per user |
+
+## Dashboard
+
+The web dashboard has two tabs:
+
+- **Home** — ranked leaderboard with total tokens, cost, and session count. Winner gets a 🏆.
+- **Detailed** — per-model breakdown with sortable columns (input, output, cache, reasoning, sessions).
+
+Auto-refreshes every 60 seconds. Light/dark theme follows your system preference.
+
+## Docker
+
+A Dockerfile is included for easy deployment:
+
+```bash
+# Build and run locally
+docker build -t token-leaderboard server/
+docker run -d -p 3456:3456 token-leaderboard
+```
+
+### One-command publish (Docker Hub + GitHub)
+
+```bash
+./docker-publish.sh YOUR_DOCKER_USERNAME
+```
+
+This will:
+1. Build the Docker image
+2. Test it starts correctly
+3. Push to Docker Hub
+4. Commit all changes and push to GitHub
+
+Then anyone can run:
+```bash
+docker run -d -p 3456:3456 YOUR_DOCKER_USERNAME/token-leaderboard
+```
+
+## Deploying the Server
+
+The server is a single Node.js process. Deploy anywhere that supports Node 18+:
+
+```bash
+# Clone on your server
+git clone https://github.com/YOUR_USERNAME/token-leaderboard.git
+cd token-leaderboard/server
+npm install --production
+
+# Run with a process manager (e.g., pm2)
+PORT=3456 node server.js
+```
+
+Or use a platform like [Fly.io](https://fly.io), [Railway](https://railway.app), or a $5 VPS.
+
+## Privacy
+
+- No accounts, no emails, no passwords
+- Just a nickname you choose
+- Only token counts and model names are uploaded
+- Session titles are included (you can see what sessions were about)
+- No message content, no code, no prompts
+
+## Requirements
+
+- **CLI**: bash, sqlite3, curl (all preinstalled on macOS and most Linux)
+- **Server**: Node.js 18+
+
+## Creating Your GitHub Repo
+
+```bash
+# From the project directory
+git init
+git add .
+git commit -m "Initial commit: token leaderboard CLI + server"
+
+# Create a repo on GitHub (or use gh CLI)
+gh repo create token-leaderboard --public --push --source=.
+
+# Or manually:
+# 1. Create github.com/YOUR_USERNAME/token-leaderboard on GitHub
+# 2. git remote add origin git@github.com:YOUR_USERNAME/token-leaderboard.git
+# 3. git push -u origin main
+```
+
+## License
+
+MIT
