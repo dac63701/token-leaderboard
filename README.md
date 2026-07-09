@@ -11,7 +11,7 @@ A lightweight token usage leaderboard for OpenCode users. Track how many tokens 
 ### 1. Install the CLI
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/token-leaderboard.git
+git clone https://github.com/dac63701/token-leaderboard.git
 cd token-leaderboard
 ./install.sh
 ```
@@ -158,7 +158,7 @@ The server is a single Node.js process. Deploy anywhere that supports Node 18+:
 
 ```bash
 # Clone on your server
-git clone https://github.com/YOUR_USERNAME/token-leaderboard.git
+git clone https://github.com/dac63701/token-leaderboard.git
 cd token-leaderboard/server
 npm install --production
 
@@ -166,7 +166,7 @@ npm install --production
 PORT=3456 node server.js
 ```
 
-Or use a platform like [Fly.io](https://fly.io), [Railway](https://railway.app), or a $5 VPS.
+Or use a VPS.
 
 ## Privacy
 
