@@ -338,6 +338,22 @@ print_summary() {
 }
 
 # ===============================================================
+#  First upload
+# ===============================================================
+run_first_upload() {
+  echo ""
+  echo "  Running first-time upload..."
+  if "$CLI_TARGET" --first-run 2>/dev/null; then
+    echo "  Your token usage has been uploaded to the leaderboard."
+    echo "  Open ${SERVER_URL} in your browser to view it."
+  else
+    echo "  First upload skipped (no token data found or server unreachable)."
+    echo "  Run 'token-leaderboard' later to upload."
+  fi
+  echo ""
+}
+
+# ===============================================================
 #  Main
 # ===============================================================
 main() {
@@ -349,6 +365,7 @@ main() {
   install_cli
   install_shell_hook
   save_config
+  run_first_upload
   print_summary
 }
 

@@ -45,6 +45,7 @@ LOGIN_MODE=false
 UPDATE_MODE=false
 PRICING_MODE=false
 PRICING_MODEL=""
+FIRST_RUN=false
 
 # ============================================================
 # Parse flags
@@ -66,6 +67,7 @@ while [ $# -gt 0 ]; do
       fi
       shift
       ;;
+    --first-run)  FIRST_RUN=true; shift ;;
     *)
       echo "Unknown flag: $1"
       echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset] [--version] [--login] [--update] [--pricing [model]]"
@@ -91,6 +93,7 @@ Usage:
   token-leaderboard --login                Authenticate with GitHub (device flow)
   token-leaderboard --update               Self-update from server
   token-leaderboard --pricing [model]      Show pricing info (all models or specific)
+  token-leaderboard --first-run            One-shot upload with minimal output (used by install)
 
 Configuration: ~/.config/token-leaderboard/config
   NICKNAME=<your-name>
@@ -422,6 +425,21 @@ if [ "$PRICING_MODE" = true ]; then
   fi
 
   exit 0
+fi
+
+# ============================================================
+# --first-run flag: minimal output, used by install.sh
+# ============================================================
+if [ "$FIRST_RUN" = true ]; then
+  load_config || true
+  SERVER_URL="${SERVER_URL%/}"
+  echo "  Uploading tokens..."
+  run_upload_cycle >/dev/null
+  local exit_code=$?
+  if [ "$exit_code" = "0" ]; then
+    echo "  ✓ First upload complete!"
+  fi
+  exit "$exit_code"
 fi
 
 # ============================================================
