@@ -155,15 +155,15 @@ check_deps
 # ============================================================
 parse_json() {
   local key="$1"
-  grep -o "\"$key\": *\"[^\"]*\"" | sed "s/.*\"$key\": *\"//;s/\"//"
+  grep -o "\"$key\": *\"[^\"]*\"" | sed "s/.*\"$key\": *\"//;s/\"//" | head -1
 }
 parse_json_value() {
   local key="$1"
-  grep -o "\"$key\": *[0-9.]*" | sed "s/.*\"$key\": *//"
+  grep -o "\"$key\": *[0-9.]*" | sed "s/.*\"$key\": *//" | head -1
 }
 parse_json_bool() {
   local key="$1"
-  grep -o "\"$key\": *\(true\|false\)" | sed "s/.*\"$key\": *//"
+  grep -o "\"$key\": *\(true\|false\)" | sed "s/.*\"$key\": *//" | head -1
 }
 
 # ============================================================
@@ -571,6 +571,7 @@ json_escape() {
 # Validate a JSON value is a number (non-empty, digits/dot/dash)
 ensure_num() {
   local val="$1" default="${2:-0}"
+  val=$(printf '%s' "$val" | head -1)
   if [ -z "$val" ] || ! printf '%s' "$val" | grep -qE '^-?[0-9]+\.?[0-9]*$'; then
     printf '%s' "$default"
   else
