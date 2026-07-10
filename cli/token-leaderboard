@@ -355,21 +355,17 @@ run_update() {
   server_sha256=$(echo "$update_response" | parse_json "sha256")
   download_url=$(echo "$update_response" | parse_json "url")
 
-  if [ -z "$download_url" ]; then
+  if [ -z "$server_sha256" ] || [ -z "$download_url" ]; then
     echo "Error: Failed to check for updates from server."
     return 1
   fi
 
-  # If server provides a sha256, compare; otherwise skip (old server format)
-  if [ -n "$server_sha256" ]; then
-    if [ "$local_hash" = "$server_sha256" ]; then
-      echo "Up to date."
-      return 0
-    fi
-    echo "New version available. Downloading..."
-  else
-    echo "New version available (server does not provide checksum). Downloading..."
+  if [ "$local_hash" = "$server_sha256" ]; then
+    echo "Up to date."
+    return 0
   fi
+
+  echo "New version available. Downloading..."
 
   local tmp_file
   tmp_file=$(mktemp /tmp/token-leaderboard.XXXXXX)
@@ -386,15 +382,13 @@ run_update() {
     return 1
   fi
 
-  # Verify downloaded file hash (only if server provided one)
-  if [ -n "$server_sha256" ]; then
-    local dl_hash
-    dl_hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
-    if [ "$dl_hash" != "$server_sha256" ]; then
-      echo "Error: Downloaded file checksum mismatch."
-      rm -f "$tmp_file"
-      return 1
-    fi
+  # Verify downloaded file hash
+  local dl_hash
+  dl_hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
+  if [ "$dl_hash" != "$server_sha256" ]; then
+    echo "Error: Downloaded file checksum mismatch."
+    rm -f "$tmp_file"
+    return 1
   fi
 
   chmod +x "$tmp_file"
