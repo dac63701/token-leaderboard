@@ -168,6 +168,19 @@ PORT=3456 node server.js
 
 Or use a VPS.
 
+## Uninstall
+
+```bash
+./uninstall.sh
+```
+
+Removes the CLI binary from `~/.local/bin/token-leaderboard`, deletes `~/.config/token-leaderboard/`, and cleans up auto-upload hooks from your shell rc files.
+
+To also remove the cloned repository:
+```bash
+cd .. && rm -rf token-leaderboard
+```
+
 ## Privacy
 
 - No accounts, no emails, no passwords
