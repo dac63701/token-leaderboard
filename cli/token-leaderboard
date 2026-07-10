@@ -883,22 +883,23 @@ run_upload_cycle() {
 
   # Upload
   local upload_endpoint="${SERVER_URL}/api/upload"
-  local auth_header=""
-  if [ -n "$GITHUB_TOKEN" ]; then
-    auth_header="-H \"Authorization: Bearer ${GITHUB_TOKEN}\""
-  fi
 
   if [ "$AUTO_MODE" = false ]; then
     echo "Uploading ${#UPLOAD_IDS[@]} session(s) to ${upload_endpoint}..."
   fi
 
   local response
-  response=$(eval curl -s --connect-timeout 10 --max-time 30 \
-    -w \"\\n%{http_code}\" -X POST \
-    -H "Content-Type: application/json" \
-    $auth_header \
-    -d "$json" \
-    "$upload_endpoint" 2>/dev/null)
+  local curl_args=(
+    -s --connect-timeout 10 --max-time 30
+    -w "\n%{http_code}"
+    -X POST
+    -H "Content-Type: application/json"
+  )
+  if [ -n "$GITHUB_TOKEN" ]; then
+    curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+  fi
+  curl_args+=(-d "$json" "$upload_endpoint")
+  response=$(curl "${curl_args[@]}" 2>/dev/null)
 
   local http_code body
   http_code=$(echo "$response" | tail -1)
