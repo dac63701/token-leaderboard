@@ -470,6 +470,86 @@ app.post("/api/upload/delta", (req, res) => {
   }
 });
 
+// ── POST /api/upload/seed ───────────────────────────────────────────────────
+// Overwrite a user's data with verified ground truth (one model entry per row)
+app.post("/api/upload/seed", (req, res) => {
+  try {
+    const { nickname, models } = req.body;
+    if (!nickname || typeof nickname !== "string" || nickname.trim().length === 0) {
+      return res.status(400).json({ error: "nickname is required" });
+    }
+    if (!Array.isArray(models) || models.length === 0) {
+      return res.status(400).json({ error: "models array is required" });
+    }
+
+    const cleanNick = nickname.trim();
+    const now = Date.now();
+
+    // Build models_used entries and compute totals
+    const modelEntries = [];
+    let total_input = 0, total_output = 0, total_cache_read = 0, total_cache_write = 0, total_reasoning = 0;
+    let total_sessions = 0;
+
+    for (const m of models) {
+      const entry = {
+        model: m.model || "unknown",
+        input: m.input || 0,
+        output: m.output || 0,
+        cache_read: m.cache_read || 0,
+        cache_write: m.cache_write || 0,
+        reasoning: m.reasoning || 0,
+        sessions: m.sessions || 1,
+        sources: ["opencode"],
+      };
+      modelEntries.push(entry);
+      total_input += entry.input;
+      total_output += entry.output;
+      total_cache_read += entry.cache_read;
+      total_cache_write += entry.cache_write;
+      total_reasoning += entry.reasoning;
+      total_sessions += entry.sessions;
+    }
+
+    const total_cost = 0; // cost recalculation can be added later
+    const total_tokens = total_input + total_output + total_cache_read + total_cache_write + total_reasoning;
+    const total_water = total_tokens * WATER_FACTOR_PER_TOKEN;
+
+    // Delete existing row and insert fresh data
+    db.prepare("DELETE FROM uploads WHERE nickname = ?").run(cleanNick);
+    db.prepare(`
+      INSERT INTO uploads (nickname, total_input, total_output, total_cache_read, total_cache_write,
+        total_reasoning, total_cost, total_water, session_count, models_used, session_ids,
+        time_uploaded, time_from, time_to)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?)
+    `).run(
+      cleanNick,
+      total_input,
+      total_output,
+      total_cache_read,
+      total_cache_write,
+      total_reasoning,
+      total_cost,
+      total_water,
+      total_sessions,
+      JSON.stringify(modelEntries),
+      now,
+      now - 86400000, // time_from: ~1 day ago
+      now,
+    );
+
+    return res.json({
+      status: "ok",
+      nickname: cleanNick,
+      models_seeded: modelEntries.length,
+      total_tokens,
+      total_water,
+    });
+  } catch (err) {
+    console.error("POST /api/upload/seed error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
 // ── GET /api/leaderboard ────────────────────────────────────────────────────
 app.get("/api/leaderboard", (_req, res) => {
   try {
