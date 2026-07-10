@@ -170,11 +170,17 @@ Or use a VPS.
 
 ## Uninstall
 
+From the cloned repo (removes CLI, config, and shell hooks with confirmation):
 ```bash
 ./uninstall.sh
 ```
 
-Removes the CLI binary from `~/.local/bin/token-leaderboard`, deletes `~/.config/token-leaderboard/`, and cleans up auto-upload hooks from your shell rc files.
+Or via the CLI itself (no confirmation, run from anywhere):
+```bash
+token-leaderboard --uninstall
+```
+
+Both do the same thing: remove the binary from `~/.local/bin/token-leaderboard`, delete `~/.config/token-leaderboard/`, and clean up auto-upload hooks from your shell rc files.
 
 To also remove the cloned repository:
 ```bash

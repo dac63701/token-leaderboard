@@ -46,6 +46,7 @@ UPDATE_MODE=false
 PRICING_MODE=false
 PRICING_MODEL=""
 FIRST_RUN=false
+UNINSTALL_MODE=false
 
 # ============================================================
 # Parse flags
@@ -68,9 +69,10 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --first-run)  FIRST_RUN=true; shift ;;
+    --uninstall)  UNINSTALL_MODE=true; shift ;;
     *)
       echo "Unknown flag: $1"
-      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset] [--version] [--login] [--update] [--pricing [model]]"
+      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset] [--version] [--login] [--update] [--pricing [model]] [--uninstall]"
       exit 1
       ;;
   esac
@@ -94,6 +96,7 @@ Usage:
   token-leaderboard --update               Self-update from server
   token-leaderboard --pricing [model]      Show pricing info (all models or specific)
   token-leaderboard --first-run            One-shot upload with minimal output (used by install)
+  token-leaderboard --uninstall            Remove CLI, config, and shell hooks
 
 Configuration: ~/.config/token-leaderboard/config
   NICKNAME=<your-name>
@@ -930,6 +933,59 @@ run_upload_cycle() {
     return 1
   fi
 }
+
+# ============================================================
+# --uninstall flag
+# ============================================================
+run_uninstall() {
+  local bin_path="${HOME}/.local/bin/token-leaderboard"
+  local config_dir="${HOME}/.config/token-leaderboard"
+  local removed=false
+
+  # Remove CLI binary
+  if [ -f "$bin_path" ]; then
+    rm -f "$bin_path"
+    echo "  ✓ Removed CLI: $bin_path"
+    removed=true
+  fi
+
+  # Remove config directory
+  if [ -d "$config_dir" ]; then
+    rm -rf "$config_dir"
+    echo "  ✓ Removed config: $config_dir"
+    removed=true
+  fi
+
+  # Remove shell hooks
+  local marker="# Token Leaderboard auto-upload"
+  for rc_file in "${HOME}/.zshrc" "${HOME}/.bashrc" "${HOME}/.profile"; do
+    if [ -f "$rc_file" ] && grep -qF "$marker" "$rc_file" 2>/dev/null; then
+      sed -i '' '/# Token Leaderboard auto-upload/d' "$rc_file" 2>/dev/null || true
+      sed -i '' '/token-leaderboard --auto/d' "$rc_file" 2>/dev/null || true
+      sed -i '' '/token-leaderboard --update/d' "$rc_file" 2>/dev/null || true
+      echo "  ✓ Removed shell hook from $rc_file"
+      removed=true
+    fi
+  done
+
+  if [ "$removed" = false ]; then
+    echo "  Nothing to uninstall — Token Leaderboard not found."
+    exit 0
+  fi
+
+  echo ""
+  echo "  Token Leaderboard has been uninstalled."
+}
+
+if [ "$UNINSTALL_MODE" = true ]; then
+  echo ""
+  echo "╔══════════════════════════════════════╗"
+  echo "║    Token Leaderboard Uninstaller     ║"
+  echo "╚══════════════════════════════════════╝"
+  echo ""
+  run_uninstall
+  exit 0
+fi
 
 # ============================================================
 # Main: run once (interactive) or loop (auto)
