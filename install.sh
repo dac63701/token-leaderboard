@@ -3,12 +3,6 @@
 # Token Leaderboard — Interactive Installer
 # ==========================================
 
-# When piped (curl | bash), stdin is consumed by the pipe so read gets EOF.
-# Redirect from /dev/tty so interactive prompts reach the user's terminal.
-if [ ! -t 0 ]; then
-  { exec </dev/tty; } 2>/dev/null || true
-fi
-
 set -euo pipefail
 
 # ---- Paths ----
@@ -39,13 +33,26 @@ for arg in "$@"; do
 done
 
 # ---- Utility functions ----
+_read_tty() {
+  # When piped (curl | bash), stdin is consumed by the pipe so read gets EOF.
+  # Test if /dev/tty is usable (suppressing errors), then read from it
+  # without suppressing stderr so the -p prompt is visible.
+  if [ -t 0 ]; then
+    read -r "$@"
+  elif (: </dev/tty) 2>/dev/null; then
+    read -r "$@" </dev/tty
+  else
+    read -r "$@"
+  fi
+}
+
 prompt() {
   local msg="$1" default="$2" var_name="$3"
   local input
   if [ -n "$default" ]; then
-    read -r -p "$msg [$default]: " input
+    _read_tty -p "$msg [$default]: " input
   else
-    read -r -p "$msg: " input
+    _read_tty -p "$msg: " input
   fi
   if [ -z "$input" ] && [ -n "$default" ]; then
     input="$default"
@@ -56,7 +63,7 @@ prompt() {
 prompt_yn() {
   local msg="$1" default="$2" var_name="$3"
   local input result
-  read -r -p "$msg " input
+  _read_tty -p "$msg " input
   input="$(echo "${input:-$default}" | tr '[:upper:]' '[:lower:]')"
   case "$input" in
     y|yes) result=true ;;
@@ -286,7 +293,7 @@ github_login_prompt() {
   fi
 
   if [ -n "$browser_cmd" ]; then
-    read -r -p "  Press Enter to open the URL in your browser (or type 'n' to skip)... " skip_browser
+    _read_tty -p "  Press Enter to open the URL in your browser (or type 'n' to skip)... " skip_browser
     if [ "$skip_browser" != "n" ] && [ "$skip_browser" != "N" ]; then
       $browser_cmd "${verification_uri:-https://github.com/login/device}" 2>/dev/null || true
     fi
