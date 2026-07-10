@@ -35,11 +35,13 @@ done
 # ---- Utility functions ----
 _read_tty() {
   # When piped (curl | bash), stdin is consumed by the pipe so read gets EOF.
-  # Try reading from /dev/tty to reach the user's terminal; fall back to stdin.
+  # Try reading from /dev/tty; redirect stderr first to suppress errors from
+  # the /dev/tty open attempt. Always succeed to avoid set -e killing the
+  # script when read hits EOF.
   if [ -t 0 ]; then
-    read -r "$@"
+    read -r "$@" 2>/dev/null || true
   else
-    read -r "$@" </dev/tty 2>/dev/null || read -r "$@"
+    read -r "$@" 2>/dev/null </dev/tty || read -r "$@" 2>/dev/null || true
   fi
 }
 
