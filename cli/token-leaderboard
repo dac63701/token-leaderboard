@@ -260,6 +260,27 @@ if [ "$CONFIG_ONLY" = true ]; then
 fi
 
 # ============================================================
+# Clipboard copy helper
+# ============================================================
+clipcopy() {
+  local text="$1"
+  if command -v pbcopy &>/dev/null; then
+    printf '%s' "$text" | pbcopy
+    return 0
+  elif command -v xclip &>/dev/null; then
+    printf '%s' "$text" | xclip -selection clipboard
+    return 0
+  elif command -v xsel &>/dev/null; then
+    printf '%s' "$text" | xsel --clipboard --input
+    return 0
+  elif command -v clip.exe &>/dev/null; then
+    printf '%s' "$text" | clip.exe
+    return 0
+  fi
+  return 1
+}
+
+# ============================================================
 # --login flag (GitHub device auth)
 # ============================================================
 if [ "$LOGIN_MODE" = true ]; then
@@ -281,6 +302,9 @@ if [ "$LOGIN_MODE" = true ]; then
 
   echo "Open this URL: ${verification_uri:-https://github.com/login/device}"
   echo "Enter code: $user_code"
+  if clipcopy "$user_code"; then
+    echo "(Code copied to clipboard!)"
+  fi
   echo ""
   echo "Waiting for authentication..."
 

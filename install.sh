@@ -32,6 +32,25 @@ for arg in "$@"; do
   esac
 done
 
+# ---- Clipboard ----
+clipcopy() {
+  local text="$1"
+  if command -v pbcopy &>/dev/null; then
+    printf '%s' "$text" | pbcopy
+    return 0
+  elif command -v xclip &>/dev/null; then
+    printf '%s' "$text" | xclip -selection clipboard
+    return 0
+  elif command -v xsel &>/dev/null; then
+    printf '%s' "$text" | xsel --clipboard --input
+    return 0
+  elif command -v clip.exe &>/dev/null; then
+    printf '%s' "$text" | clip.exe
+    return 0
+  fi
+  return 1
+}
+
 # ---- Utility functions ----
 _read_tty() {
   # When piped (curl | bash), stdin is consumed by the pipe so read gets EOF.
@@ -278,6 +297,9 @@ github_login_prompt() {
 
   echo "  Open this URL: ${verification_uri:-https://github.com/login/device}"
   echo "  Enter code:    $user_code"
+  if clipcopy "$user_code"; then
+    echo "  (Code copied to clipboard!)"
+  fi
   echo ""
 
   local poll_interval="${interval:-5}"
