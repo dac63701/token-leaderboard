@@ -22,7 +22,8 @@ const state = {
   loginPollTimer: null,
   settingsOpen: false,
   autoRefreshEnabled: true,
-  _serverConnected: true
+  _serverConnected: true,
+  _refreshing: false
 };
 
 /* ---- Helpers ---- */
@@ -94,8 +95,6 @@ async function fetchHome() {
   loadingEl.classList.remove('hidden');
   errorEl.classList.add('hidden');
   container.innerHTML = '';
-  var wrapper = container.querySelector('.table-wrapper');
-  if (wrapper) wrapper.classList.add('loading-data');
 
   try {
     var res = await fetch('/api/leaderboard');
@@ -121,8 +120,6 @@ async function fetchDetailed() {
   loadingEl.classList.remove('hidden');
   errorEl.classList.add('hidden');
   container.innerHTML = '';
-  var wrapper = container.querySelector('.table-wrapper');
-  if (wrapper) wrapper.classList.add('loading-data');
 
   try {
     var res = await fetch('/api/leaderboard/detailed');
@@ -130,6 +127,10 @@ async function fetchDetailed() {
     state.detailedData = await res.json();
     state._serverConnected = true;
     state.lastUpdated = Date.now();
+
+    // Pre-load pricing for all models before rendering to avoid re-render cascade
+    await loadPricingForDetailed();
+
     renderDetailed();
   } catch (err) {
     errorEl.textContent = 'Failed to load detailed data: ' + err.message;
@@ -151,6 +152,21 @@ async function fetchPricing(model) {
   } catch (err) {
     state.pricingCache[model] = null;
     return null;
+  }
+}
+
+async function loadPricingForDetailed() {
+  var rows = getDetailedRows();
+  var modelSet = {};
+  rows.forEach(function(r) { modelSet[r.model] = true; });
+  var fetches = [];
+  Object.keys(modelSet).forEach(function(m) {
+    if (state.pricingCache[m] === undefined) {
+      fetches.push(fetchPricing(m));
+    }
+  });
+  if (fetches.length > 0) {
+    await Promise.all(fetches);
   }
 }
 
@@ -331,7 +347,6 @@ function renderDetailed() {
           vb = vb || 0;
           return state.sortAsc ? va - vb : vb - va;
         }
-        // Source column sorts by concatenated source names
         if (col.key === 'source') {
           va = (a.sources || []).join(',').toLowerCase();
           vb = (b.sources || []).join(',').toLowerCase();
@@ -391,34 +406,6 @@ function renderDetailed() {
       '<tbody>' + tbody + '</tbody>' +
     '</table>' +
   '</div>';
-
-  container.querySelectorAll('th.sortable').forEach(function(th) {
-    th.addEventListener('click', function() {
-      sortData(th.dataset.column);
-      renderDetailed();
-    });
-  });
-
-  loadPricingForRows(rows);
-}
-
-async function loadPricingForRows(rows) {
-  var models = {};
-  rows.forEach(function(r) { models[r.model] = true; });
-  var modelList = Object.keys(models);
-  var fetches = [];
-  modelList.forEach(function(m) {
-    if (state.pricingCache[m] === undefined) {
-      fetches.push(fetchPricing(m));
-    }
-  });
-  if (fetches.length === 0) return;
-  await Promise.all(fetches);
-  if (state.activeTab === 'detailed') {
-    var activeSort = state.sortColumn;
-    renderDetailed();
-    state.sortColumn = activeSort;
-  }
 }
 
 /* ---- Sorting ---- */
@@ -523,18 +510,24 @@ function updateLastUpdated() {
 }
 
 async function refreshData() {
-  var promises = [];
-  if (state.activeTab === 'home' || state.homeData.length > 0) {
-    promises.push(fetchHome());
+  if (state._refreshing) return;
+  state._refreshing = true;
+  try {
+    var promises = [];
+    if (state.activeTab === 'home' || state.homeData.length > 0) {
+      promises.push(fetchHome());
+    }
+    if (state.activeTab === 'detailed' || state.detailedData.length > 0) {
+      promises.push(fetchDetailed());
+    }
+    if (promises.length === 0) {
+      promises.push(fetchHome());
+    }
+    promises.push(fetchStats());
+    await Promise.all(promises);
+  } finally {
+    state._refreshing = false;
   }
-  if (state.activeTab === 'detailed' || state.detailedData.length > 0) {
-    promises.push(fetchDetailed());
-  }
-  if (promises.length === 0) {
-    promises.push(fetchHome());
-  }
-  promises.push(fetchStats());
-  await Promise.all(promises);
 }
 
 /* ---- Tooltips ---- */
@@ -566,7 +559,7 @@ function getTooltipData(cell) {
   return lines.join(' | ');
 }
 
-function showTooltip(e, cell) {
+function showTooltip(cell) {
   var text = getTooltipData(cell);
   if (!text) return;
 
@@ -623,7 +616,10 @@ function initTooltipListeners() {
       state._tooltipCell = cell;
       clearTimeout(state.tooltipTimeout);
       state.tooltipTimeout = setTimeout(function() {
-        showTooltip(e, cell);
+        var c = state._tooltipCell;
+        if (c && c.isConnected) {
+          showTooltip(c);
+        }
       }, 200);
     }
   });
@@ -633,7 +629,6 @@ function initTooltipListeners() {
     if (!cell || !cell.contains(e.relatedTarget)) {
       clearTimeout(state.tooltipTimeout);
       hideTooltip();
-      state._tooltipCell = null;
     }
   });
 }
@@ -709,6 +704,17 @@ function initLogin() {
       state.user = null;
     }
   }
+
+  // Single delegated listener for closing dropdown (added once, never leaks)
+  document.addEventListener('click', function(e) {
+    var dropdown = $('#user-dropdown');
+    if (dropdown && dropdown.classList.contains('open')) {
+      if (!e.target.closest('#user-badge') && !e.target.closest('#user-dropdown')) {
+        dropdown.classList.remove('open');
+      }
+    }
+  });
+
   updateLoginUI();
 }
 
@@ -732,10 +738,6 @@ function updateLoginUI() {
       e.stopPropagation();
       dropdown.classList.toggle('open');
     });
-
-    document.addEventListener('click', function() {
-      dropdown.classList.remove('open');
-    }, { once: false });
 
     $('#logout-btn').addEventListener('click', function() {
       state.user = null;
@@ -893,6 +895,16 @@ function init() {
 
   $('#login-modal-close').addEventListener('click', function() {
     closeModal($('#login-modal'));
+  });
+
+  // Event delegation for detailed table sort headers (one listener, no per-render accumulation)
+  var detailedContainer = $('#detailed-table-container');
+  detailedContainer.addEventListener('click', function(e) {
+    var th = e.target.closest('th.sortable');
+    if (th) {
+      sortData(th.dataset.column);
+      renderDetailed();
+    }
   });
 
   initSettings();
