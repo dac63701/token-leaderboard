@@ -959,8 +959,19 @@ function init() {
   fetchStats();
   fetchHome();
   fetchDetailed();
+  fetchVersion();
 
   restartAutoRefresh();
+}
+
+function fetchVersion() {
+  var el = $('#server-version');
+  if (!el) return;
+  fetch('/api/version').then(function(r) { return r.json(); }).then(function(d) {
+    var label = 'v' + d.version;
+    if (d.commit) label += ' (' + d.commit + ')';
+    el.textContent = label;
+  }).catch(function() {});
 }
 
 document.addEventListener('DOMContentLoaded', init);

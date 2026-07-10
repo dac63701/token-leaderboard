@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
 import crypto from "crypto";
+import https from "https";
 import { initPricingEngine, lookupPricing } from "./pricing.js";
 import createAuthRouter from "./auth.js";
 import createAdminRouter, { initAdmin } from "./admin.js";
@@ -574,31 +575,124 @@ app.get("/install.sh", (_req, res) => {
   }
 });
 
-// ── GET /api/cli/version ────────────────────────────────────────────────────
-let cliSha256 = "";
-const cliPath = path.join(__dirname, "..", "cli", "token-leaderboard");
-try {
-  const cliContent = fs.readFileSync(cliPath);
-  cliSha256 = crypto.createHash("sha256").update(cliContent).digest("hex");
-} catch {
-  console.warn("CLI script not found at", cliPath, "— update checks disabled");
+// ── CLI update helpers ──────────────────────────────────────────────────────
+const CLI_GITHUB_URL =
+  "https://raw.githubusercontent.com/dac63701/token-leaderboard/main/cli/token-leaderboard";
+
+// Find CLI script in multiple possible locations
+function findCliPath() {
+  const candidates = [
+    path.join(__dirname, "..", "cli", "token-leaderboard"),
+    path.join(process.cwd(), "cli", "token-leaderboard"),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
-app.get("/api/cli/version", (_req, res) => {
-  res.json({
-    sha256: cliSha256,
-    url: "/api/cli/download",
+// Download and cache CLI from GitHub, return its SHA256
+function ensureCliCached() {
+  return new Promise((resolve) => {
+    const cachePath = path.join(__dirname, "data", ".cli-cached");
+    // Re-fetch every hour (check mtime)
+    try {
+      const stat = fs.statSync(cachePath);
+      if (Date.now() - stat.mtimeMs < 3600000) {
+        const content = fs.readFileSync(cachePath);
+        const sha256 = crypto.createHash("sha256").update(content).digest("hex");
+        resolve({ path: cachePath, sha256 });
+        return;
+      }
+    } catch { /* not cached yet */ }
+
+    https.get(CLI_GITHUB_URL, (res) => {
+      if (res.statusCode !== 200) {
+        console.warn("GitHub fetch failed:", res.statusCode);
+        resolve(null);
+        return;
+      }
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => {
+        const buf = Buffer.concat(chunks);
+        fs.writeFileSync(cachePath, buf);
+        const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
+        resolve({ path: cachePath, sha256 });
+      });
+    }).on("error", (err) => {
+      console.warn("Failed to cache CLI from GitHub:", err.message);
+      resolve(null);
+    });
   });
+}
+
+let cliSha256 = "";
+let cliPath = findCliPath();
+
+if (cliPath) {
+  const content = fs.readFileSync(cliPath);
+  cliSha256 = crypto.createHash("sha256").update(content).digest("hex");
+  console.log("CLI script found at", cliPath);
+} else {
+  console.warn("CLI script not found locally — will fetch from GitHub on demand");
+}
+
+// ── GET /api/cli/version ────────────────────────────────────────────────────
+app.get("/api/cli/version", async (_req, res) => {
+  let sha = cliSha256;
+  let url = cliPath ? "/api/cli/download" : CLI_GITHUB_URL;
+
+  // If no local copy, fetch from GitHub and cache
+  if (!cliPath) {
+    const cached = await ensureCliCached();
+    if (cached) {
+      sha = cached.sha256;
+      url = "/api/cli/download";
+    }
+  }
+
+  res.json({ sha256: sha, url });
 });
 
 // ── GET /api/cli/download ───────────────────────────────────────────────────
-app.get("/api/cli/download", (_req, res) => {
-  if (fs.existsSync(cliPath)) {
-    res.setHeader("Content-Type", "text/x-shellscript");
-    res.sendFile(cliPath);
-  } else {
-    res.status(404).json({ error: "CLI script not available on server" });
+app.get("/api/cli/download", async (_req, res) => {
+  let filePath = cliPath;
+
+  if (!filePath) {
+    const cached = await ensureCliCached();
+    if (cached) filePath = cached.path;
   }
+
+  if (filePath && fs.existsSync(filePath)) {
+    res.setHeader("Content-Type", "text/x-shellscript");
+    res.sendFile(filePath);
+  } else {
+    // Last resort: redirect to GitHub
+    res.redirect(302, CLI_GITHUB_URL);
+  }
+});
+
+// ── GET /api/version ────────────────────────────────────────────────────────
+const SERVER_VERSION =
+  JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf-8")).version || "0.0.0";
+let GIT_HASH = "";
+try {
+  GIT_HASH = fs.readFileSync(path.join(__dirname, "..", ".git", "HEAD"), "utf-8").trim();
+  if (GIT_HASH.startsWith("ref: ")) {
+    const refPath = path.join(__dirname, "..", ".git", GIT_HASH.slice(5));
+    GIT_HASH = fs.readFileSync(refPath, "utf-8").trim().slice(0, 8);
+  } else {
+    GIT_HASH = GIT_HASH.slice(0, 8);
+  }
+} catch { /* not a git repo */ }
+
+app.get("/api/version", (_req, res) => {
+  res.json({
+    version: SERVER_VERSION,
+    commit: GIT_HASH,
+    cli_sha256: cliSha256 || null,
+  });
 });
 
 // ── Start ───────────────────────────────────────────────────────────────────
