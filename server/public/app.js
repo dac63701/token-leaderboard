@@ -260,10 +260,13 @@ function toggleExpandRow(row) {
   if (models.length === 0) return;
 
   var subRows = models.map(function(m) {
-    var srcBadges = (m.sources || []).map(function(src) {
-      var cfg = SOURCE_CONFIG[src] || { color: '#9ca3af', label: src };
-      return '<span class="source-badge" style="background:' + cfg.color + '">' + cfg.label + '</span>';
-    }).join('');
+    var srcs = m.sources || [];
+    var srcBadges = srcs.length > 0
+      ? (function() {
+          var cfg = SOURCE_CONFIG[srcs[0]] || { color: '#9ca3af', label: srcs[0] };
+          return '<span class="source-badge" style="background:' + cfg.color + '">' + cfg.label + '</span>';
+        })()
+      : '';
     return '<tr>' +
       '<td>' + escapeHtml(m.model || 'unknown') + '</td>' +
       '<td class="num-cell">' + formatNumber(m.input || 0) + '</td>' +

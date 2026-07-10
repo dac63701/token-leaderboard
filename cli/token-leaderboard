@@ -686,6 +686,8 @@ print(ti); print(to); print(cc); print(cr); print(co); print(model)
     model=${model:-unknown}
     TOTAL=$(( input_tokens + output_tokens + cache_creation + cache_read ))
     [ "$TOTAL" -eq 0 ] && continue
+    # Skip synthetic/placeholder model names
+    case "$model" in *\<*|*\>*|unknown) continue ;; esac
     SESSION_IDS+=("${session_id}")
     MODEL_IDS+=("${model}")
     PROVIDERS+=("")
@@ -921,9 +923,11 @@ run_upload_cycle() {
 
   for i in "${!SESSION_IDS[@]}"; do
     if [ "${IS_NEW[$i]}" = "1" ] || [ "${IS_DELTA[$i]}" = "1" ]; then
-      # Skip sessions with zero tokens (no useful data to record)
+      # Skip sessions with zero tokens or junk model names
       local z_total=$(( ${TOKENS_INPUT[$i]:-0} + ${TOKENS_OUTPUT[$i]:-0} + ${TOKENS_CACHE_READ[$i]:-0} + ${TOKENS_CACHE_WRITE[$i]:-0} + ${TOKENS_REASONING[$i]:-0} ))
       [ "$z_total" -eq 0 ] && continue
+      local m="${MODEL_IDS[$i]}"
+      case "$m" in *\<*|*\>*|unknown) continue ;; esac
       UPLOAD_IDS+=("${SESSION_IDS[$i]}")
       UPLOAD_MODEL_IDS+=("${MODEL_IDS[$i]}")
       UPLOAD_PROVIDERS+=("${PROVIDERS[$i]}")

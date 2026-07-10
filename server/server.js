@@ -78,9 +78,8 @@ db.exec(`
 `);
 
 // Prepared statements
-// Water estimation: ~0.5L of data center cooling water per 1K tokens
-// Based on Microsoft / "Making AI Less Thirsty" research (~0.5L per 1000 inference tokens)
-const WATER_FACTOR_PER_TOKEN = 0.0005;
+// Water estimation: ~0.04L of data center cooling water per 1K tokens
+const WATER_FACTOR_PER_TOKEN = 0.00004;
 
 const upsertStmt = db.prepare(`
   INSERT INTO uploads (nickname, total_input, total_output, total_cache_read, total_cache_write,
