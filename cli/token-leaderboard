@@ -10,9 +10,6 @@ set -o pipefail
 # ============================================================
 # Version
 # ============================================================
-SCRIPT_VERSION="2.0"
-
-# ============================================================
 # Paths
 # ============================================================
 CONFIG_DIR="${HOME}/.config/token-leaderboard"
@@ -40,7 +37,7 @@ HELP=false
 CONFIG_ONLY=false
 AUTO_MODE=false
 RESET_MODE=false
-VERSION_ONLY=false
+SCRIPT_PATH=""
 LOGIN_MODE=false
 UPDATE_MODE=false
 PRICING_MODE=false
@@ -57,7 +54,6 @@ while [ $# -gt 0 ]; do
     --config)   CONFIG_ONLY=true; shift ;;
     --auto)     AUTO_MODE=true; shift ;;
     --reset)    RESET_MODE=true; shift ;;
-    --version)  VERSION_ONLY=true; shift ;;
     --login)    LOGIN_MODE=true; shift ;;
     --update)   UPDATE_MODE=true; shift ;;
     --pricing)
@@ -72,7 +68,7 @@ while [ $# -gt 0 ]; do
     --uninstall)  UNINSTALL_MODE=true; shift ;;
     *)
       echo "Unknown flag: $1"
-      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset] [--version] [--login] [--update] [--pricing [model]] [--uninstall]"
+      echo "Usage: token-leaderboard [--help] [--config] [--auto] [--reset] [--login] [--update] [--pricing [model]] [--uninstall]"
       exit 1
       ;;
   esac
@@ -91,7 +87,6 @@ Usage:
   token-leaderboard --config               Print current configuration
   token-leaderboard --auto                 Run silently in loop (requires AUTO=1 in config)
   token-leaderboard --reset                Clear uploaded sessions and re-upload everything
-  token-leaderboard --version              Print version and exit
   token-leaderboard --login                Authenticate with GitHub (device flow)
   token-leaderboard --update               Self-update from server
   token-leaderboard --pricing [model]      Show pricing info (all models or specific)
@@ -116,14 +111,6 @@ EOF
 # ============================================================
 if [ "$HELP" = true ]; then
   usage
-  exit 0
-fi
-
-# ============================================================
-# --version flag
-# ============================================================
-if [ "$VERSION_ONLY" = true ]; then
-  echo "token-leaderboard v${SCRIPT_VERSION}"
   exit 0
 fi
 
@@ -349,51 +336,62 @@ run_update() {
   load_config || true
   SERVER_URL="${SERVER_URL%/}"
 
-  echo "Checking for updates..."
-  update_response=$(curl -s "$SERVER_URL/api/cli/version" 2>/dev/null)
-
-  latest_version=$(echo "$update_response" | parse_json "latest")
-  download_url=$(echo "$update_response" | parse_json "url")
-  sha256_hash=$(echo "$update_response" | parse_json "sha256")
-
-  if [ -z "$latest_version" ] || [ -z "$download_url" ]; then
-    echo "Error: Failed to check for updates from server."
-    return 1
-  fi
-
-  if [ "$latest_version" = "$SCRIPT_VERSION" ]; then
-    echo "Already up to date (v${SCRIPT_VERSION})"
-    return 0
-  fi
-
-  echo "New version available: v${latest_version} (current: v${SCRIPT_VERSION})"
-
-  local tmp_file
-  tmp_file=$(mktemp /tmp/token-leaderboard.XXXXXX)
-
-  if ! curl -sL -o "$tmp_file" "$download_url" 2>/dev/null; then
-    echo "Error: Failed to download update."
-    rm -f "$tmp_file"
-    return 1
-  fi
-
-  if [ -n "$sha256_hash" ]; then
-    local actual_hash
-    actual_hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
-    if [ "$actual_hash" != "$sha256_hash" ]; then
-      echo "Error: SHA256 mismatch. Expected ${sha256_hash}, got ${actual_hash}."
-      rm -f "$tmp_file"
-      return 1
-    fi
-  fi
-
-  chmod +x "$tmp_file"
-
+  # Resolve local script path
   local script_path
   script_path="$(command -v token-leaderboard 2>/dev/null || realpath "$0" 2>/dev/null || echo "$0")"
   if echo "$script_path" | grep -q "^\."; then
     script_path="$PWD/${script_path#./}"
   fi
+
+  # Compute local SHA256
+  local local_hash=""
+  if [ -f "$script_path" ]; then
+    local_hash=$(shasum -a 256 "$script_path" | cut -d' ' -f1)
+  fi
+
+  echo "Checking for updates..."
+  update_response=$(curl -s "$SERVER_URL/api/cli/version" 2>/dev/null)
+
+  server_sha256=$(echo "$update_response" | parse_json "sha256")
+  download_url=$(echo "$update_response" | parse_json "url")
+
+  if [ -z "$server_sha256" ] || [ -z "$download_url" ]; then
+    echo "Error: Failed to check for updates from server."
+    return 1
+  fi
+
+  if [ "$local_hash" = "$server_sha256" ]; then
+    echo "Up to date."
+    return 0
+  fi
+
+  echo "New version available. Downloading..."
+
+  local tmp_file
+  tmp_file=$(mktemp /tmp/token-leaderboard.XXXXXX)
+
+  # Prepend server URL if download_url is a relative path
+  local full_url="$download_url"
+  if echo "$download_url" | grep -q "^/"; then
+    full_url="${SERVER_URL}${download_url}"
+  fi
+
+  if ! curl -sL -o "$tmp_file" "$full_url" 2>/dev/null; then
+    echo "Error: Failed to download update."
+    rm -f "$tmp_file"
+    return 1
+  fi
+
+  # Verify downloaded file hash
+  local dl_hash
+  dl_hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
+  if [ "$dl_hash" != "$server_sha256" ]; then
+    echo "Error: Downloaded file checksum mismatch."
+    rm -f "$tmp_file"
+    return 1
+  fi
+
+  chmod +x "$tmp_file"
 
   if ! mv "$tmp_file" "$script_path" 2>/dev/null; then
     if command -v cp &>/dev/null && cp "$tmp_file" "$script_path" 2>/dev/null; then
@@ -405,7 +403,7 @@ run_update() {
     fi
   fi
 
-  echo "✓ Updated to version ${latest_version}"
+  echo "✓ Updated."
   return 0
 }
 

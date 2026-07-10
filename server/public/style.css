@@ -90,16 +90,6 @@ html[data-theme="dark"] {
   --skeleton-highlight: #3a3a5c;
 }
 
-/* Theme toggle icon visibility */
-html:not([data-theme]) .theme-icon-dark { display: none; }
-html:not([data-theme]) .theme-icon-light { display: block; }
-
-html[data-theme="dark"] .theme-icon-dark { display: none; }
-html[data-theme="dark"] .theme-icon-light { display: block; }
-
-html[data-theme="light"] .theme-icon-light { display: none; }
-html[data-theme="light"] .theme-icon-dark { display: block; }
-
 /* --- Reset & Base --- */
 *, *::before, *::after {
   box-sizing: border-box;

@@ -866,6 +866,18 @@ function initHomeTableDelegation() {
 
 /* ---- Theme Toggle ---- */
 
+var THEME_ICONS = {
+  sun: '<circle cx="10" cy="10" r="4"/><path d="M10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M3.4 3.4l1.4 1.4M15.2 15.2l1.4 1.4M3.4 16.6l1.4-1.4M15.2 4.8l1.4-1.4"/>',
+  moon: '<path d="M17.5 10.5A7.5 7.5 0 0 1 3 8a7.5 7.5 0 0 0 14.5 2.5z"/>'
+};
+
+function setThemeIcon(theme) {
+  var icon = $('#theme-icon');
+  if (!icon) return;
+  var isDark = theme === 'dark' || (!theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  icon.innerHTML = isDark ? THEME_ICONS.sun : THEME_ICONS.moon;
+}
+
 function initTheme() {
   var btn = $('#theme-btn');
   if (!btn) return;
@@ -875,6 +887,8 @@ function initTheme() {
     document.documentElement.setAttribute('data-theme', saved);
   }
 
+  setThemeIcon(document.documentElement.getAttribute('data-theme'));
+
   btn.addEventListener('click', function() {
     var current = document.documentElement.getAttribute('data-theme');
     var next;
@@ -883,11 +897,11 @@ function initTheme() {
     } else if (current === 'light') {
       next = 'dark';
     } else {
-      // Following system — switch to opposite of system preference
       next = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark';
     }
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('tl_theme', next);
+    setThemeIcon(next);
   });
 }
 

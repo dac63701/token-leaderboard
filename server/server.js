@@ -3,6 +3,7 @@ import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import path from "path";
 import fs from "fs";
+import crypto from "crypto";
 import { initPricingEngine, lookupPricing } from "./pricing.js";
 import createAuthRouter from "./auth.js";
 import createAdminRouter, { initAdmin } from "./admin.js";
@@ -574,12 +575,30 @@ app.get("/install.sh", (_req, res) => {
 });
 
 // ── GET /api/cli/version ────────────────────────────────────────────────────
+let cliSha256 = "";
+const cliPath = path.join(__dirname, "..", "cli", "token-leaderboard");
+try {
+  const cliContent = fs.readFileSync(cliPath);
+  cliSha256 = crypto.createHash("sha256").update(cliContent).digest("hex");
+} catch {
+  console.warn("CLI script not found at", cliPath, "— update checks disabled");
+}
+
 app.get("/api/cli/version", (_req, res) => {
   res.json({
-    latest: "2.0",
-    url: "https://raw.githubusercontent.com/dac63701/token-leaderboard/main/cli/token-leaderboard",
-    sha256: "",
+    sha256: cliSha256,
+    url: "/api/cli/download",
   });
+});
+
+// ── GET /api/cli/download ───────────────────────────────────────────────────
+app.get("/api/cli/download", (_req, res) => {
+  if (fs.existsSync(cliPath)) {
+    res.setHeader("Content-Type", "text/x-shellscript");
+    res.sendFile(cliPath);
+  } else {
+    res.status(404).json({ error: "CLI script not available on server" });
+  }
 });
 
 // ── Start ───────────────────────────────────────────────────────────────────
