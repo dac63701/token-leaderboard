@@ -540,7 +540,10 @@ json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
-  s=$(printf '%s' "$s" | tr '\t\n\r' '   ')
+  s="${s//$'\t'/ }"
+  s="${s//$'\n'/ }"
+  s="${s//$'\r'/ }"
+  s=$(printf '%s' "$s" | tr -d '\000-\037\177' 2>/dev/null)
   printf '%s' "$s"
 }
 
@@ -604,7 +607,7 @@ read_claude_code() {
     local session_id
     session_id=$(string_md5 "$file")
     local mtime=0
-    mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=0
+    mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=0
     local last_line
     last_line=$(tail -1 "$file" 2>/dev/null)
     [ -z "$last_line" ] && continue
@@ -649,7 +652,7 @@ read_codex_cli() {
     local session_id
     session_id=$(string_md5 "$file")
     local mtime=0
-    mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=0
+    mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=0
     local model
     model=$(grep -o '"model"[[:space:]]*:[[:space:]]*"[^"]*"' "$file" 2>/dev/null | head -1 | sed 's/"model" *: *"//;s/"//')
     model=${model:-unknown}
@@ -697,7 +700,7 @@ read_copilot() {
       llm_requests=$(grep '"llm_request"' "$file" 2>/dev/null)
       [ -z "$llm_requests" ] && continue
       local mtime=0
-      mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=0
+      mtime=$(stat -c "%Y" "$file" 2>/dev/null) || mtime=$(stat -f "%m" "$file" 2>/dev/null) || mtime=0
       local models_list
       models_list=$(echo "$llm_requests" | grep -o '"model"[[:space:]]*:[[:space:]]*"[^"]*"' | sed 's/"model" *: *"//;s/"//' | sort -u)
       [ -z "$models_list" ] && continue
@@ -929,7 +932,12 @@ run_upload_cycle() {
       else
         echo "Error: Server returned HTTP ${http_code}"
       fi
-      if [ -n "$body" ]; then echo "Response: $body"; fi
+      if [ -n "$body" ]; then
+        echo "Server response: $body"
+        echo "---"
+        echo "Tip: Check that NICKNAME is set and SERVER_URL is correct in your config."
+        echo "     Run 'token-leaderboard --config' to view your settings."
+      fi
     fi
     return 1
   fi

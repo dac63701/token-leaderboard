@@ -864,6 +864,33 @@ function initHomeTableDelegation() {
   });
 }
 
+/* ---- Theme Toggle ---- */
+
+function initTheme() {
+  var btn = $('#theme-btn');
+  if (!btn) return;
+
+  var saved = localStorage.getItem('tl_theme');
+  if (saved === 'light' || saved === 'dark') {
+    document.documentElement.setAttribute('data-theme', saved);
+  }
+
+  btn.addEventListener('click', function() {
+    var current = document.documentElement.getAttribute('data-theme');
+    var next;
+    if (current === 'dark') {
+      next = 'light';
+    } else if (current === 'light') {
+      next = 'dark';
+    } else {
+      // Following system — switch to opposite of system preference
+      next = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark';
+    }
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('tl_theme', next);
+  });
+}
+
 /* ---- Admin ---- */
 
 /* ---- Init ---- */
@@ -909,6 +936,7 @@ function init() {
     }
   });
 
+  initTheme();
   initSettings();
   initLogin();
   initTooltipListeners();
