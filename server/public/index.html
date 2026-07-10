@@ -5,98 +5,108 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Token Leaderboard</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='20,16 16,8 8,8 4,16 8,24 16,24' fill='none' stroke='%234a9eff' stroke-width='2' stroke-linejoin='round'/%3E%3Cpolygon points='28,16 24,8 16,8 12,16 16,24 24,24' fill='none' stroke='%2380b3ff' stroke-width='1.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%234a9eff'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
-  <header>
-    <div class="header-left">
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
-        <polygon points="20,16 16,9.07 8,9.07 4,16 8,22.93 16,22.93" fill="rgba(74,158,255,0.12)" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
-        <polygon points="28,16 24,9.07 16,9.07 12,16 16,22.93 24,22.93" fill="none" stroke="var(--accent)" stroke-width="1.3" stroke-linejoin="round"/>
-        <circle cx="16" cy="16" r="2.5" fill="var(--accent)"/>
-      </svg>
-      <h1>Token Leaderboard</h1>
-      <span id="nickname-display" class="nickname-display"></span>
-    </div>
-    <div class="header-right">
-      <div id="login-area"></div>
-      <button id="theme-btn" class="btn-icon" title="Toggle theme" aria-label="Toggle theme">
-        <svg id="theme-icon" viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg>
-      </button>
-    </div>
-  </header>
+  <div class="page-width">
+    <header>
+      <div class="header-left">
+        <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+          <polygon points="20,16 16,9.07 8,9.07 4,16 8,22.93 16,22.93" fill="rgba(74,158,255,0.12)" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
+          <polygon points="28,16 24,9.07 16,9.07 12,16 16,22.93 24,22.93" fill="none" stroke="var(--accent)" stroke-width="1.3" stroke-linejoin="round"/>
+          <circle cx="16" cy="16" r="2.5" fill="var(--accent)"/>
+        </svg>
+        <h1>Token Leaderboard</h1>
+        <span id="nickname-display" class="nickname-display"></span>
+      </div>
+      <div class="header-right">
+        <div id="login-area"></div>
+        <button id="theme-btn" class="btn-icon" title="Toggle theme" aria-label="Toggle theme">
+          <svg id="theme-icon" viewBox="0 0 20 20" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg>
+        </button>
+      </div>
+    </header>
 
-  <div id="stats-bar" class="stats-bar">
-    <div class="stat-card">
-      <span class="stat-label">Total Tokens</span>
-      <span class="stat-value" id="stat-total-tokens">—</span>
+    <div id="stats-bar" class="stats-bar">
+      <div class="stat-card">
+        <span class="stat-label">Total Tokens</span>
+        <span class="stat-value" id="stat-total-tokens">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Total Cost</span>
+        <span class="stat-value" id="stat-total-cost">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Total Sessions</span>
+        <span class="stat-value" id="stat-total-sessions">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Est. Water</span>
+        <span class="stat-value" id="stat-total-water">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Active Users</span>
+        <span class="stat-value" id="stat-active-users">—</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">7-Day Active</span>
+        <span class="stat-value" id="stat-active-7d">—</span>
+      </div>
     </div>
-    <div class="stat-card">
-      <span class="stat-label">Total Cost</span>
-      <span class="stat-value" id="stat-total-cost">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Total Sessions</span>
-      <span class="stat-value" id="stat-total-sessions">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">Active Users</span>
-      <span class="stat-value" id="stat-active-users">—</span>
-    </div>
-    <div class="stat-card">
-      <span class="stat-label">7-Day Active</span>
-      <span class="stat-value" id="stat-active-7d">—</span>
-    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="home">Home</button>
+      <button class="tab" data-tab="detailed">Detailed</button>
+    </nav>
   </div>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="home">Home</button>
-    <button class="tab" data-tab="detailed">Detailed</button>
-  </nav>
-
   <main>
-    <div id="tab-home" class="tab-content active">
-      <h2 class="tab-title">Leaderboard</h2>
-      <div id="home-loading" class="loading">
-        <div class="skeleton-table">
-          <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
-          <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
-          <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
-          <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
-          <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
+    <div class="page-width">
+      <div id="tab-home" class="tab-content active">
+        <h2 class="tab-title">Leaderboard</h2>
+        <div id="home-loading" class="loading">
+          <div class="skeleton-table">
+            <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
+            <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
+            <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
+            <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
+            <div class="skeleton-row"><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:25%"></div><div class="skeleton-cell" style="width:20%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:12%"></div></div>
+          </div>
         </div>
+        <div id="home-error" class="message error hidden"></div>
+        <div id="home-table-container"></div>
       </div>
-      <div id="home-error" class="message error hidden"></div>
-      <div id="home-table-container"></div>
     </div>
 
     <div id="tab-detailed" class="tab-content">
-      <h2 class="tab-title">Per-Model Breakdown</h2>
-      <div id="detailed-loading" class="loading">
+      <div class="page-width">
+        <h2 class="tab-title">Per-Model Breakdown</h2>
+      </div>
+      <div id="detailed-loading" class="loading" style="padding:0 24px">
         <div class="skeleton-table">
           <div class="skeleton-row"><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div></div>
-          <div class="skeleton-row"><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div></div>
+            <div class="skeleton-row"><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div></div>
           <div class="skeleton-row"><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:15%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:12%"></div><div class="skeleton-cell" style="width:10%"></div><div class="skeleton-cell" style="width:10%"></div></div>
         </div>
       </div>
-      <div id="detailed-error" class="message error hidden"></div>
+      <div id="detailed-error" class="message error hidden" style="margin:0 24px"></div>
       <div id="detailed-table-container"></div>
     </div>
-
-
   </main>
 
   <footer>
-    <div class="footer-left">
-      <span id="refresh-indicator">Auto-refreshing in 60s…</span>
-    </div>
-    <div class="footer-center">
-      <span class="status-dot" id="status-dot"></span>
-      <span id="last-updated"></span>
-    </div>
-    <div class="footer-right">
-      <button id="refresh-btn" class="btn-refresh">Refresh Now</button>
-      <span id="server-version" class="server-version" style="margin-left:8px;font-size:11px;color:var(--text-muted)"></span>
+    <div class="page-width" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;width:100%">
+      <div class="footer-left">
+        <span id="refresh-indicator">Auto-refreshing in 60s…</span>
+      </div>
+      <div class="footer-center">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="last-updated"></span>
+      </div>
+      <div class="footer-right">
+        <button id="refresh-btn" class="btn-refresh">Refresh Now</button>
+        <span id="server-version" class="server-version" style="margin-left:8px;font-size:11px;color:var(--text-muted)"></span>
+      </div>
     </div>
   </footer>
 
@@ -116,6 +126,6 @@
     <div class="tooltip-body"></div>
   </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

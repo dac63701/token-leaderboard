@@ -58,6 +58,12 @@ const SOURCE_CONFIG = {
   'copilot':     { color: '#6b7280', label: 'Copilot' }
 };
 
+function formatWater(n) {
+  if (n == null || isNaN(n) || n === 0) return '\u2014';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K\u00a0L';
+  return Number(n).toFixed(1) + '\u00a0L';
+}
+
 function formatCompact(n) {
   if (n == null || isNaN(n)) return '0';
   if (n >= 1000000000) return (n / 1000000000).toFixed(1) + 'B';
@@ -176,6 +182,7 @@ function renderStats() {
   $('#stat-total-tokens').textContent = formatCompact(state.stats.total_tokens);
   $('#stat-total-cost').textContent = '$' + formatCost(state.stats.total_cost);
   $('#stat-total-sessions').textContent = formatNumber(state.stats.total_sessions);
+  $('#stat-total-water').textContent = formatWater(state.stats.total_water || 0);
   $('#stat-active-users').textContent = formatNumber(state.stats.active_users || state.stats.active_24h || 0);
   $('#stat-active-7d').textContent = formatNumber(state.stats.active_7d || 0);
 }
@@ -207,6 +214,7 @@ function renderHome() {
       '<td class="nickname-cell">' + escapeHtml(row.nickname) + '</td>' +
       '<td class="num-cell token-cell" data-tk="' + tokenBreakdown.replace(/"/g, '&quot;') + '">' + formatNumber(row.total_tokens) + '</td>' +
       '<td class="num-cell cost-cell" data-tk="' + tokenBreakdown.replace(/"/g, '&quot;') + '" data-nick="' + escapeHtml(row.nickname) + '">$' + formatCost(row.total_cost) + '</td>' +
+      '<td class="num-cell water-cell">' + formatWater(row.total_water) + '</td>' +
       '<td class="num-cell">' + formatNumber(row.session_count) + '</td>' +
     '</tr>';
   }).join('');
@@ -218,6 +226,7 @@ function renderHome() {
         '<th>Nickname</th>' +
         '<th>Total Tokens</th>' +
         '<th>Cost ($)</th>' +
+        '<th>Water (L)</th>' +
         '<th>Sessions</th>' +
       '</tr></thead>' +
       '<tbody>' + rows + '</tbody>' +
@@ -276,7 +285,7 @@ function toggleExpandRow(row) {
 
   var tr = document.createElement('tr');
   tr.className = 'expanded-row';
-  tr.innerHTML = '<td colspan="5"><div class="expanded-inner" style="max-height:0;overflow:hidden;transition:max-height 0.3s ease">' + subTable + '</div></td>';
+  tr.innerHTML = '<td colspan="6"><div class="expanded-inner" style="max-height:0;overflow:hidden;transition:max-height 0.3s ease">' + subTable + '</div></td>';
 
   row.parentNode.insertBefore(tr, row.nextSibling);
   row.classList.add('expanded');

@@ -52,6 +52,11 @@ try {
 } catch {
   /* column already exists */
 }
+try {
+  db.exec("ALTER TABLE uploads ADD COLUMN total_water REAL DEFAULT 0");
+} catch {
+  /* column already exists */
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS accounts (
@@ -73,12 +78,15 @@ db.exec(`
 `);
 
 // Prepared statements
+// Water estimation: ~2L of data center cooling water per $1 of compute
+const WATER_FACTOR = 2.0;
+
 const upsertStmt = db.prepare(`
   INSERT INTO uploads (nickname, total_input, total_output, total_cache_read, total_cache_write,
-    total_reasoning, total_cost, session_count, models_used, session_ids, uploader_github_id,
+    total_reasoning, total_cost, total_water, session_count, models_used, session_ids, uploader_github_id,
     time_uploaded, time_from, time_to)
   VALUES (@nickname, @total_input, @total_output, @total_cache_read, @total_cache_write,
-    @total_reasoning, @total_cost, @session_count, @models_used, @session_ids, @uploader_github_id,
+    @total_reasoning, @total_cost, @total_water, @session_count, @models_used, @session_ids, @uploader_github_id,
     @time_uploaded, @time_from, @time_to)
   ON CONFLICT(nickname) DO UPDATE SET
     total_input       = total_input       + @total_input,
@@ -87,6 +95,7 @@ const upsertStmt = db.prepare(`
     total_cache_write = total_cache_write + @total_cache_write,
     total_reasoning   = total_reasoning   + @total_reasoning,
     total_cost        = total_cost        + @total_cost,
+    total_water       = total_water       + @total_water,
     session_count     = session_count     + @session_count,
     models_used       = @models_used,
     session_ids       = @session_ids,
@@ -328,6 +337,8 @@ app.post("/api/upload", (req, res) => {
       mergedModels = computeModels(sessions);
     }
 
+    const total_water = totals.total_cost * WATER_FACTOR;
+
     upsertStmt.run({
       nickname: cleanNick,
       total_input: totals.total_input,
@@ -336,6 +347,7 @@ app.post("/api/upload", (req, res) => {
       total_cache_write: totals.total_cache_write,
       total_reasoning: totals.total_reasoning,
       total_cost: totals.total_cost,
+      total_water,
       session_count: newSessions.length,
       models_used: JSON.stringify(mergedModels),
       session_ids: sessionIdsJson,
@@ -468,6 +480,7 @@ app.get("/api/leaderboard", (_req, res) => {
           total_cache_write: row.total_cache_write,
           total_reasoning: row.total_reasoning,
           total_cost: row.total_cost || 0,
+          total_water: row.total_water || 0,
           session_count: row.session_count,
         };
       })
@@ -513,6 +526,7 @@ app.get("/api/stats", (_req, res) => {
 
     let total_tokens = 0;
     let total_cost = 0;
+    let total_water = 0;
     let total_sessions = 0;
     let active_24h = 0;
     let active_7d = 0;
@@ -525,6 +539,7 @@ app.get("/api/stats", (_req, res) => {
         row.total_cache_write +
         row.total_reasoning;
       total_cost += row.total_cost || 0;
+      total_water += row.total_water || 0;
       total_sessions += row.session_count || 0;
 
       if (row.time_uploaded > day24) active_24h++;
@@ -534,6 +549,7 @@ app.get("/api/stats", (_req, res) => {
     res.json({
       total_tokens,
       total_cost,
+      total_water,
       total_sessions,
       active_users: rows.length,
       active_24h,
