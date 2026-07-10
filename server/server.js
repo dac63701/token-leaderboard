@@ -78,8 +78,9 @@ db.exec(`
 `);
 
 // Prepared statements
-// Water estimation: ~2L of data center cooling water per $1 of compute
-const WATER_FACTOR = 2.0;
+// Water estimation: ~0.5L of data center cooling water per 1K tokens
+// Based on Microsoft / "Making AI Less Thirsty" research (~0.5L per 1000 inference tokens)
+const WATER_FACTOR_PER_TOKEN = 0.0005;
 
 const upsertStmt = db.prepare(`
   INSERT INTO uploads (nickname, total_input, total_output, total_cache_read, total_cache_write,
@@ -287,6 +288,7 @@ app.post("/api/upload", (req, res) => {
 
     const cleanNick = nickname.trim();
     const now = Date.now();
+    const isClean = req.body.clean === true;
 
     // Resolve uploader from auth header
     const authHeader = req.headers.authorization;
@@ -301,8 +303,13 @@ app.post("/api/upload", (req, res) => {
       .prepare("SELECT * FROM uploads WHERE nickname = ?")
       .get(cleanNick);
 
-    // Parse existing session IDs
-    const existingIds = new Set(parseSessionIds(existingRow));
+    let existingIds = new Set(parseSessionIds(existingRow));
+
+    // clean=true: reset the row so all sessions are treated as new
+    if (isClean && existingRow) {
+      db.prepare("DELETE FROM uploads WHERE nickname = ?").run(cleanNick);
+      existingIds = new Set();
+    }
 
     // Separate new vs delta sessions
     const newSessions = sessions.filter((s) => !existingIds.has(s.id));
@@ -337,7 +344,13 @@ app.post("/api/upload", (req, res) => {
       mergedModels = computeModels(sessions);
     }
 
-    const total_water = totals.total_cost * WATER_FACTOR;
+    const total_tokens_for_water =
+      totals.total_input +
+      totals.total_output +
+      totals.total_cache_read +
+      totals.total_cache_write +
+      totals.total_reasoning;
+    const total_water = total_tokens_for_water * WATER_FACTOR_PER_TOKEN;
 
     upsertStmt.run({
       nickname: cleanNick,
@@ -480,7 +493,7 @@ app.get("/api/leaderboard", (_req, res) => {
           total_cache_write: row.total_cache_write,
           total_reasoning: row.total_reasoning,
           total_cost: row.total_cost || 0,
-          total_water: row.total_water || 0,
+          total_water: total_tokens * WATER_FACTOR_PER_TOKEN,
           session_count: row.session_count,
         };
       })
@@ -539,12 +552,13 @@ app.get("/api/stats", (_req, res) => {
         row.total_cache_write +
         row.total_reasoning;
       total_cost += row.total_cost || 0;
-      total_water += row.total_water || 0;
       total_sessions += row.session_count || 0;
 
       if (row.time_uploaded > day24) active_24h++;
       if (row.time_uploaded > day7) active_7d++;
     }
+
+    total_water = total_tokens * WATER_FACTOR_PER_TOKEN;
 
     res.json({
       total_tokens,
