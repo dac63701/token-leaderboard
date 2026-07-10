@@ -20,7 +20,6 @@ const state = {
   tooltipTimeout: null,
   _tooltipCell: null,
   loginPollTimer: null,
-  settingsOpen: false,
   autoRefreshEnabled: true,
   _serverConnected: true,
   _refreshing: false
@@ -640,57 +639,8 @@ function initSettings() {
   state.refreshInterval = saved ? parseInt(saved, 10) : 60;
   if (isNaN(state.refreshInterval) || state.refreshInterval < 10) state.refreshInterval = 60;
 
-  var slider = $('#interval-slider');
-  var label = $('#interval-label');
-  var toggle = $('#auto-refresh-toggle');
-  var panel = $('#settings-panel');
-  var overlay = $('#settings-overlay');
-  var openBtn = $('#settings-btn');
-  var closeBtn = $('#settings-close');
-
-  slider.value = state.refreshInterval;
-  label.textContent = 'Refresh every ' + state.refreshInterval + 's';
-
   var autoSaved = localStorage.getItem('tl_auto_refresh');
   state.autoRefreshEnabled = autoSaved !== null ? autoSaved === '1' : true;
-  toggle.checked = state.autoRefreshEnabled;
-
-  slider.addEventListener('input', function() {
-    var val = parseInt(slider.value, 10);
-    label.textContent = 'Refresh every ' + val + 's';
-    state.refreshInterval = val;
-    localStorage.setItem('tl_refresh_interval', val);
-    if (state.autoRefreshEnabled) {
-      restartAutoRefresh();
-    }
-  });
-
-  toggle.addEventListener('change', function() {
-    state.autoRefreshEnabled = toggle.checked;
-    localStorage.setItem('tl_auto_refresh', state.autoRefreshEnabled ? '1' : '0');
-    restartAutoRefresh();
-  });
-
-  openBtn.addEventListener('click', function() {
-    state.settingsOpen = true;
-    panel.classList.add('open');
-    overlay.classList.remove('hidden');
-    requestAnimationFrame(function() {
-      overlay.classList.add('visible');
-    });
-  });
-
-  function closeSettings() {
-    state.settingsOpen = false;
-    overlay.classList.remove('visible');
-    panel.classList.remove('open');
-    setTimeout(function() {
-      overlay.classList.add('hidden');
-    }, 200);
-  }
-
-  closeBtn.addEventListener('click', closeSettings);
-  overlay.addEventListener('click', closeSettings);
 }
 
 /* ---- Login ---- */
