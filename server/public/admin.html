@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Token Leaderboard</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='20,16 16,8 8,8 4,16 8,24 16,24' fill='none' stroke='%234a9eff' stroke-width='2' stroke-linejoin='round'/%3E%3Cpolygon points='28,16 24,8 16,8 12,16 16,24 24,24' fill='none' stroke='%2380b3ff' stroke-width='1.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%234a9eff'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    body { max-width: 720px; }
+    .admin-header { display:flex; align-items:center; justify-content:space-between; }
+    .admin-back { font-size:14px; color:var(--accent); text-decoration:none; }
+    .admin-back:hover { text-decoration:underline; }
+    .admin-login-box { max-width:380px; margin:24px 0; padding:24px; background:var(--bg-alt); border:1px solid var(--border); border-radius:var(--radius); }
+    .admin-login-desc { font-size:14px; color:var(--text-muted); margin-bottom:16px; }
+    .admin-login-form { display:flex; gap:8px; }
+    .admin-input { flex:1; padding:8px 12px; font-size:14px; border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--bg); color:var(--text); outline:none; transition:border-color 0.2s; }
+    .admin-input:focus { border-color:var(--accent); }
+    .admin-btn { padding:8px 20px; font-size:14px; font-weight:500; border:1px solid var(--accent); border-radius:var(--radius-sm); background:var(--accent); color:#fff; cursor:pointer; transition:all 0.2s; white-space:nowrap; }
+    .admin-btn:hover { background:var(--accent-hover); border-color:var(--accent-hover); }
+    .admin-btn:disabled { opacity:0.6; cursor:not-allowed; }
+    .admin-btn-sm { padding:5px 12px; font-size:12px; }
+    .admin-btn-danger { background:var(--danger); border-color:var(--danger); color:#fff; }
+    .admin-btn-danger:hover { background:#dc2626; border-color:#dc2626; }
+    .admin-badge { display:inline-flex; align-items:center; gap:5px; padding:3px 12px; font-size:12px; font-weight:600; border-radius:999px; background:var(--accent-bg); color:var(--accent); border:1px solid var(--accent); text-transform:uppercase; letter-spacing:0.5px; }
+    .admin-bar { display:flex; align-items:center; justify-content:space-between; margin-bottom:16px; }
+    .admin-error { font-size:13px; color:var(--danger); margin-top:12px; padding:8px 10px; background:var(--danger-bg); border-radius:var(--radius-sm); }
+    .admin-delete-btn { font-size:11px; padding:3px 10px; }
+    .modal-box-sm { max-width:360px; }
+    .confirm-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:20px; }
+    #confirm-message { font-size:14px; color:var(--text-muted); line-height:1.5; }
+    td.num-cell { text-align:right; font-variant-numeric:tabular-nums; }
+    td.nickname-cell { font-weight:500; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <polygon points="20,16 16,9.07 8,9.07 4,16 8,22.93 16,22.93" fill="rgba(74,158,255,0.12)" stroke="var(--accent)" stroke-width="1.8" stroke-linejoin="round"/>
+        <polygon points="28,16 24,9.07 16,9.07 12,16 16,22.93 24,22.93" fill="none" stroke="var(--accent)" stroke-width="1.3" stroke-linejoin="round"/>
+        <circle cx="16" cy="16" r="2.5" fill="var(--accent)"/>
+      </svg>
+      <h1>Token Leaderboard Admin</h1>
+    </div>
+    <div class="header-right">
+      <a href="/" class="admin-back">&larr; Back to Leaderboard</a>
+    </div>
+  </header>
+
+  <main>
+    <div id="admin-login-view">
+      <div class="admin-login-box">
+        <p class="admin-login-desc">Enter the admin password to manage users.</p>
+        <div class="admin-login-form">
+          <input type="password" id="admin-password" class="admin-input" placeholder="Admin password" autocomplete="off">
+          <button id="admin-login-btn" class="admin-btn">Login</button>
+        </div>
+        <p id="admin-login-error" class="admin-error hidden"></p>
+      </div>
+    </div>
+
+    <div id="admin-manage-view" class="hidden">
+      <div class="admin-bar">
+        <span class="admin-badge">Admin</span>
+        <button id="admin-logout-btn" class="admin-btn admin-btn-sm">Log out</button>
+      </div>
+      <div id="admin-users-loading" class="loading">Loading users...</div>
+      <div id="admin-users-error" class="message error hidden"></div>
+      <div id="admin-users-container"></div>
+    </div>
+  </main>
+
+  <div id="confirm-modal" class="modal-overlay hidden">
+    <div class="modal-box modal-box-sm">
+      <button id="confirm-modal-close" class="btn-close">&times;</button>
+      <h3 id="confirm-title">Confirm</h3>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="admin-btn admin-btn-sm">Cancel</button>
+        <button id="confirm-ok" class="admin-btn admin-btn-sm admin-btn-danger">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var adminToken = null;
+
+    function $$(sel, ctx) { return Array.from((ctx || document).querySelectorAll(sel)); }
+    function $(sel, ctx) { return (ctx || document).querySelector(sel); }
+    function escapeHtml(str) { if (str == null) return ''; var d = document.createElement('div'); d.appendChild(document.createTextNode(str)); return d.innerHTML; }
+    function formatNumber(n) { if (n == null || isNaN(n)) return '0'; return Number(n).toLocaleString('en-US'); }
+    function formatCost(n) { if (n == null || isNaN(n)) return '0.00'; return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+    var stored = sessionStorage.getItem('tl_admin_token');
+    if (stored) adminToken = stored;
+
+    var pwInput = $('#admin-password');
+    var loginBtn = $('#admin-login-btn');
+    var loginError = $('#admin-login-error');
+    var loginView = $('#admin-login-view');
+    var manageView = $('#admin-manage-view');
+    var logoutBtn = $('#admin-logout-btn');
+    var loading = $('#admin-users-loading');
+    var error = $('#admin-users-error');
+    var container = $('#admin-users-container');
+    var confirmModal = $('#confirm-modal');
+    var confirmOk = $('#confirm-ok');
+    var confirmCancel = $('#confirm-cancel');
+    var confirmClose = $('#confirm-modal-close');
+    var confirmTitle = $('#confirm-title');
+    var confirmMessage = $('#confirm-message');
+    var confirmPending = null;
+
+    function updateUI() {
+      if (adminToken) {
+        loginView.classList.add('hidden');
+        manageView.classList.remove('hidden');
+        fetchUsers();
+      } else {
+        loginView.classList.remove('hidden');
+        manageView.classList.add('hidden');
+      }
+    }
+
+    async function doLogin() {
+      loginError.classList.add('hidden');
+      loginBtn.disabled = true;
+      loginBtn.textContent = 'Logging in...';
+      try {
+        var res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwInput.value })
+        });
+        if (!res.ok) {
+          var d; try { d = await res.json(); } catch (e) {}
+          throw new Error((d && d.error) || 'Login failed: ' + res.status);
+        }
+        var d = await res.json();
+        adminToken = d.token;
+        sessionStorage.setItem('tl_admin_token', d.token);
+        pwInput.value = '';
+        updateUI();
+      } catch (err) {
+        loginError.textContent = err.message;
+        loginError.classList.remove('hidden');
+      } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Login';
+      }
+    }
+
+    function doLogout() {
+      if (adminToken) {
+        fetch('/api/admin/logout', { method: 'POST', headers: { 'Authorization': 'Bearer ' + adminToken } }).catch(function() {});
+      }
+      adminToken = null;
+      sessionStorage.removeItem('tl_admin_token');
+      updateUI();
+    }
+
+    async function fetchUsers() {
+      if (!adminToken) return;
+      loading.classList.remove('hidden');
+      error.classList.add('hidden');
+      container.innerHTML = '';
+      try {
+        var res = await fetch('/api/admin/users', { headers: { 'Authorization': 'Bearer ' + adminToken } });
+        if (!res.ok) {
+          if (res.status === 401) { doLogout(); return; }
+          throw new Error('Failed to load users: ' + res.status);
+        }
+        renderUsers(await res.json());
+      } catch (err) {
+        error.textContent = err.message;
+        error.classList.remove('hidden');
+      } finally {
+        loading.classList.add('hidden');
+      }
+    }
+
+    function renderUsers(users) {
+      if (!users || users.length === 0) {
+        container.innerHTML = '<p class="loading" style="padding:24px 0">No users found.</p>';
+        return;
+      }
+      var rows = users.map(function(u) {
+        return '<tr>' +
+          '<td class="nickname-cell">' + escapeHtml(u.nickname) + '</td>' +
+          '<td class="num-cell">' + formatNumber((u.total_input||0) + (u.total_output||0) + (u.total_cache_read||0) + (u.total_cache_write||0) + (u.total_reasoning||0)) + '</td>' +
+          '<td class="num-cell">$' + formatCost(u.total_cost || 0) + '</td>' +
+          '<td class="num-cell">' + formatNumber(u.session_count || 0) + '</td>' +
+          '<td><button class="admin-btn admin-btn-sm admin-btn-danger admin-delete-btn" data-nickname="' + escapeHtml(u.nickname) + '">Delete</button></td>' +
+        '</tr>';
+      }).join('');
+      container.innerHTML = '<div class="table-wrapper"><table><thead><tr>' +
+        '<th>Nickname</th><th>Total Tokens</th><th>Cost</th><th>Sessions</th><th>Action</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+      container.querySelectorAll('.admin-delete-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          showConfirm('Delete User', 'Delete "' + btn.dataset.nickname + '" from the leaderboard? This cannot be undone.', function() { doDelete(btn.dataset.nickname); });
+        });
+      });
+    }
+
+    async function doDelete(nickname) {
+      try {
+        var res = await fetch('/api/admin/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + adminToken },
+          body: JSON.stringify({ nickname: nickname })
+        });
+        if (!res.ok) {
+          var d; try { d = await res.json(); } catch (e) {}
+          if (res.status === 401) { doLogout(); return; }
+          throw new Error((d && d.error) || 'Delete failed: ' + res.status);
+        }
+        fetchUsers();
+        // Invalidate cached leaderboard on the main page too (just best-effort)
+        try { await fetch('/api/leaderboard'); } catch (e) {}
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    function showConfirm(title, msg, onOk) {
+      confirmPending = onOk;
+      confirmTitle.textContent = title;
+      confirmMessage.textContent = msg;
+      confirmModal.classList.remove('hidden');
+      requestAnimationFrame(function() { confirmModal.classList.add('visible'); });
+    }
+
+    function closeConfirm() {
+      confirmPending = null;
+      confirmModal.classList.remove('visible');
+      setTimeout(function() { confirmModal.classList.add('hidden'); }, 200);
+    }
+
+    loginBtn.addEventListener('click', doLogin);
+    pwInput.addEventListener('keydown', function(e) { if (e.key === 'Enter') doLogin(); });
+    logoutBtn.addEventListener('click', doLogout);
+    confirmOk.addEventListener('click', function() { var fn = confirmPending; closeConfirm(); if (fn) fn(); });
+    confirmCancel.addEventListener('click', closeConfirm);
+    confirmClose.addEventListener('click', closeConfirm);
+    confirmModal.addEventListener('click', function(e) { if (e.target === confirmModal) closeConfirm(); });
+
+    updateUI();
+  </script>
+</body>
+</html>

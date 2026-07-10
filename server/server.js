@@ -243,6 +243,11 @@ app.use(express.json({ limit: "1mb" }));
 const publicDir = path.join(__dirname, "public");
 app.use(express.static(publicDir));
 
+// Admin page (standalone, no button in SPA — hidden route)
+app.get("/admin", (_req, res) => {
+  res.sendFile(path.join(publicDir, "admin.html"));
+});
+
 // ── Auth routes ─────────────────────────────────────────────────────────────
 app.use("/api", createAuthRouter(db));
 

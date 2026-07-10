@@ -55,7 +55,6 @@
   <nav class="tabs">
     <button class="tab active" data-tab="home">Home</button>
     <button class="tab" data-tab="detailed">Detailed</button>
-    <button class="tab" data-tab="admin">Admin</button>
   </nav>
 
   <main>
@@ -87,28 +86,7 @@
       <div id="detailed-table-container"></div>
     </div>
 
-    <div id="tab-admin" class="tab-content">
-      <h2 class="tab-title">Admin</h2>
-      <div id="admin-login-view">
-        <div class="admin-login-box">
-          <p class="admin-login-desc">Enter the admin password to manage users.</p>
-          <div class="admin-login-form">
-            <input type="password" id="admin-password" class="admin-input" placeholder="Admin password" autocomplete="off">
-            <button id="admin-login-btn" class="admin-btn">Login</button>
-          </div>
-          <p id="admin-login-error" class="admin-error hidden"></p>
-        </div>
-      </div>
-      <div id="admin-manage-view" class="hidden">
-        <div class="admin-bar">
-          <span class="admin-badge">Admin</span>
-          <button id="admin-logout-btn" class="admin-btn admin-btn-sm">Log out</button>
-        </div>
-        <div id="admin-users-loading" class="loading">Loading users...</div>
-        <div id="admin-users-error" class="message error hidden"></div>
-        <div id="admin-users-container"></div>
-      </div>
-    </div>
+
   </main>
 
   <footer>
@@ -152,18 +130,6 @@
       <p class="device-url" id="device-url"></p>
       <p class="device-code" id="device-code"></p>
       <p id="login-status" class="login-status"></p>
-    </div>
-  </div>
-
-  <div id="confirm-modal" class="modal-overlay hidden">
-    <div class="modal-box modal-box-sm">
-      <button id="confirm-modal-close" class="btn-close">&times;</button>
-      <h3 id="confirm-title">Confirm</h3>
-      <p id="confirm-message"></p>
-      <div class="confirm-actions">
-        <button id="confirm-cancel" class="admin-btn admin-btn-sm">Cancel</button>
-        <button id="confirm-ok" class="admin-btn admin-btn-sm admin-btn-danger">Delete</button>
-      </div>
     </div>
   </div>
 
