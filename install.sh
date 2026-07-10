@@ -195,14 +195,47 @@ install_cli() {
 
   echo "  ✓ Installed to: $CLI_TARGET"
 
+  echo ""
+}
+
+# ===============================================================
+#  5b. Ensure PATH includes ~/.local/bin
+# ===============================================================
+ensure_path() {
   case ":${PATH}:" in
-    *:"${BIN_DIR}":*) ;;
-    *)
-      echo "  ! WARNING: ${BIN_DIR} is not in your PATH."
-      echo "    Add the following to your shell profile:"
-      echo "      export PATH=\"\${HOME}/.local/bin:\${PATH}\""
-      ;;
+    *:"${BIN_DIR}":*) return 0 ;;
   esac
+
+  local shell_name rc_file
+  shell_name="$(basename "${SHELL:-/bin/zsh}")"
+  case "$shell_name" in
+    zsh) rc_file="${HOME}/.zshrc" ;;
+    bash) rc_file="${HOME}/.bashrc" ;;
+    *)   rc_file="${HOME}/.profile" ;;
+  esac
+
+  echo "  ${BIN_DIR} is not in your PATH."
+  echo "  Add it so you can run 'token-leaderboard' from anywhere."
+
+  local yn
+  if ! $NONINTERACTIVE; then
+    prompt_yn "  Add 'export PATH=\"\$HOME/.local/bin:\$PATH\"' to $(basename "$rc_file")? [Y/n]" "y" yn
+  else
+    yn=true
+  fi
+
+  if $yn; then
+    local line='export PATH="${HOME}/.local/bin:${PATH}"'
+    if [ -f "$rc_file" ] && grep -qF "$line" "$rc_file" 2>/dev/null; then
+      echo "  ✓ PATH entry already present in $rc_file"
+    else
+      echo "$line" >> "$rc_file"
+      echo "  ✓ Added PATH entry to $rc_file"
+      echo "  Run 'source $rc_file' or open a new terminal to use 'token-leaderboard'."
+    fi
+  else
+    echo "  You can manually add 'export PATH=\"\$HOME/.local/bin:\$PATH\"' to your shell profile."
+  fi
   echo ""
 }
 
@@ -430,6 +463,7 @@ main() {
   github_login_prompt
   configure_auto_upload
   install_cli
+  ensure_path
   install_shell_hook
   save_config
   run_first_upload

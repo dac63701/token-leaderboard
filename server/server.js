@@ -673,7 +673,7 @@ app.get("/api/version", (_req, res) => {
   res.json({
     version: SERVER_VERSION,
     commit: GIT_HASH,
-    cli_sha256: cliSha256 || null,
+    cli_sha256: null,
   });
 });
 
