@@ -10,6 +10,9 @@ set -o pipefail
 # ============================================================
 # Version
 # ============================================================
+VERSION="1.0.1"
+
+# ============================================================
 # Paths
 # ============================================================
 CONFIG_DIR="${HOME}/.config/token-leaderboard"
@@ -79,7 +82,7 @@ done
 # ============================================================
 usage() {
   cat <<'EOF'
-token-leaderboard — Upload OpenCode token usage to a leaderboard server.
+token-leaderboard v${VERSION} — Upload OpenCode token usage to a leaderboard server.
 
 Usage:
   token-leaderboard                        Run interactively (prompts if config missing)

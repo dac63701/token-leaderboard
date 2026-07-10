@@ -1,5 +1,13 @@
 # Token Leaderboard — Implementation Plan
 
+## Conventions
+
+**Versioning**: Use semver (patch bump for bugfixes/minor tweaks, minor for features, major for breaking).
+On each meaningful code change, bump both:
+- `server/package.json` → `"version": "x.y.z"`
+- `cli/token-leaderboard` → `VERSION="x.y.z"`
+Keep them in sync. The version is displayed in `token-leaderboard --help` and `/api/version`.
+
 ## Tech Stack
 - **CLI**: Bash script (zero dependencies, uses sqlite3 + curl)
 - **Server**: Node.js + Express + better-sqlite3
@@ -42,6 +50,7 @@ token-leaderboard/
 - Uploads JSON via `curl -X POST`
 - Flags: `--help`, `--config`, `--auto`, `--reset`
 - Tracks uploaded session IDs in `~/.config/token-leaderboard/uploaded` to avoid duplicates
+- Update mechanism: `--update` fetches `/api/cli/version` from server, compares SHA256 of running script with server's GitHub-fetched SHA256
 
 ## Server API
 
@@ -50,6 +59,9 @@ token-leaderboard/
 | POST | `/api/upload` | Receive token payload, upsert by nickname |
 | GET | `/api/leaderboard` | Simple ranked list (total tokens + cost) |
 | GET | `/api/leaderboard/detailed` | Per-model breakdown per user |
+| GET | `/api/version` | Server version + git commit |
+| GET | `/api/cli/version` | Latest CLI SHA256 + download URL (always fetches fresh from GitHub) |
+| GET | `/api/cli/download` | Download CLI script (cached copy or GitHub redirect) |
 
 ## Frontend
 

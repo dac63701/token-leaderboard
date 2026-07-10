@@ -579,6 +579,25 @@ app.get("/install.sh", (_req, res) => {
 const CLI_GITHUB_URL =
   "https://raw.githubusercontent.com/dac63701/token-leaderboard/main/cli/token-leaderboard";
 
+// Fetch CLI content from GitHub (always fresh — no caching)
+function fetchCliFromGitHub() {
+  return new Promise((resolve) => {
+    https.get(CLI_GITHUB_URL, (res) => {
+      if (res.statusCode !== 200) {
+        console.warn("GitHub fetch failed:", res.statusCode);
+        resolve(null);
+        return;
+      }
+      const chunks = [];
+      res.on("data", (c) => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+    }).on("error", (err) => {
+      console.warn("GitHub fetch error:", err.message);
+      resolve(null);
+    });
+  });
+}
+
 // Find CLI script in multiple possible locations
 function findCliPath() {
   const candidates = [
@@ -591,86 +610,49 @@ function findCliPath() {
   return null;
 }
 
-// Download and cache CLI from GitHub, return its SHA256
-function ensureCliCached() {
-  return new Promise((resolve) => {
-    const cachePath = path.join(__dirname, "data", ".cli-cached");
-    // Re-fetch every hour (check mtime)
-    try {
-      const stat = fs.statSync(cachePath);
-      if (Date.now() - stat.mtimeMs < 3600000) {
-        const content = fs.readFileSync(cachePath);
-        const sha256 = crypto.createHash("sha256").update(content).digest("hex");
-        resolve({ path: cachePath, sha256 });
-        return;
-      }
-    } catch { /* not cached yet */ }
-
-    https.get(CLI_GITHUB_URL, (res) => {
-      if (res.statusCode !== 200) {
-        console.warn("GitHub fetch failed:", res.statusCode);
-        resolve(null);
-        return;
-      }
-      const chunks = [];
-      res.on("data", (c) => chunks.push(c));
-      res.on("end", () => {
-        const buf = Buffer.concat(chunks);
-        fs.writeFileSync(cachePath, buf);
-        const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
-        resolve({ path: cachePath, sha256 });
-      });
-    }).on("error", (err) => {
-      console.warn("Failed to cache CLI from GitHub:", err.message);
-      resolve(null);
-    });
-  });
-}
-
-let cliSha256 = "";
 let cliPath = findCliPath();
-
 if (cliPath) {
-  const content = fs.readFileSync(cliPath);
-  cliSha256 = crypto.createHash("sha256").update(content).digest("hex");
-  console.log("CLI script found at", cliPath);
+  console.log("CLI script found locally at", cliPath);
 } else {
-  console.warn("CLI script not found locally — will fetch from GitHub on demand");
+  console.warn("CLI script not found locally");
 }
 
 // ── GET /api/cli/version ────────────────────────────────────────────────────
+// Always fetches the latest SHA256 from GitHub so pushes are detected immediately.
 app.get("/api/cli/version", async (_req, res) => {
-  let sha = cliSha256;
-  let url = cliPath ? "/api/cli/download" : CLI_GITHUB_URL;
-
-  // If no local copy, fetch from GitHub and cache
-  if (!cliPath) {
-    const cached = await ensureCliCached();
-    if (cached) {
-      sha = cached.sha256;
-      url = "/api/cli/download";
-    }
+  const buf = await fetchCliFromGitHub();
+  if (buf) {
+    const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
+    // Also cache the content for download endpoint
+    const cacheDir = path.join(__dirname, "data");
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.writeFileSync(path.join(cacheDir, ".cli-cached"), buf);
+    res.json({ sha256, url: "/api/cli/download" });
+  } else if (cliPath) {
+    // Fall back to local copy
+    const content = fs.readFileSync(cliPath);
+    const sha256 = crypto.createHash("sha256").update(content).digest("hex");
+    res.json({ sha256, url: "/api/cli/download" });
+  } else {
+    // Last resort: tell CLI to fetch from GitHub directly
+    res.json({ sha256: "", url: CLI_GITHUB_URL });
   }
-
-  res.json({ sha256: sha, url });
 });
 
 // ── GET /api/cli/download ───────────────────────────────────────────────────
-app.get("/api/cli/download", async (_req, res) => {
-  let filePath = cliPath;
-
-  if (!filePath) {
-    const cached = await ensureCliCached();
-    if (cached) filePath = cached.path;
-  }
-
-  if (filePath && fs.existsSync(filePath)) {
+app.get("/api/cli/download", (_req, res) => {
+  const cachePath = path.join(__dirname, "data", ".cli-cached");
+  if (fs.existsSync(cachePath)) {
     res.setHeader("Content-Type", "text/x-shellscript");
-    res.sendFile(filePath);
-  } else {
-    // Last resort: redirect to GitHub
-    res.redirect(302, CLI_GITHUB_URL);
+    res.sendFile(cachePath);
+    return;
   }
+  if (cliPath && fs.existsSync(cliPath)) {
+    res.setHeader("Content-Type", "text/x-shellscript");
+    res.sendFile(cliPath);
+    return;
+  }
+  res.redirect(302, CLI_GITHUB_URL);
 });
 
 // ── GET /api/version ────────────────────────────────────────────────────────
