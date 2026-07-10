@@ -8,7 +8,8 @@ set -euo pipefail
 # ---- Paths ----
 CONFIG_DIR="${HOME}/.config/token-leaderboard"
 CONFIG_FILE="${CONFIG_DIR}/config"
-CLI_SOURCE="$(cd "$(dirname "$0")" && pwd)/cli/token-leaderboard"
+CLI_SOURCE_LOCAL="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/cli/token-leaderboard"
+CLI_SOURCE_URL="https://raw.githubusercontent.com/dac63701/token-leaderboard/main/cli/token-leaderboard"
 CLI_TARGET="${HOME}/.local/bin/token-leaderboard"
 BIN_DIR="${HOME}/.local/bin"
 OPENCODE_DB="${HOME}/.local/share/opencode/opencode.db"
@@ -135,17 +136,30 @@ configure_auto_upload() {
 install_cli() {
   echo "  Installing CLI script …"
 
-  if [ ! -f "$CLI_SOURCE" ]; then
-    echo ""
-    echo "  ERROR: CLI script not found at:"
-    echo "         $CLI_SOURCE"
-    echo "  Ensure 'cli/token-leaderboard' exists in the project."
-    exit 1
+  local src
+
+  if [ -f "$CLI_SOURCE_LOCAL" ]; then
+    src="$CLI_SOURCE_LOCAL"
+  else
+    echo "  Downloading CLI from GitHub..."
+    src="$(mktemp /tmp/token-leaderboard-cli.XXXXXX)"
+    if ! curl -fsSL -o "$src" "$CLI_SOURCE_URL" 2>/dev/null; then
+      echo ""
+      echo "  ERROR: Could not download CLI script from:"
+      echo "         $CLI_SOURCE_URL"
+      echo "  Check your internet connection or clone the repo and run ./install.sh"
+      rm -f "$src"
+      exit 1
+    fi
   fi
 
   mkdir -p "$BIN_DIR"
-  cp "$CLI_SOURCE" "$CLI_TARGET"
+  cp "$src" "$CLI_TARGET"
   chmod +x "$CLI_TARGET"
+
+  if [ "$src" != "$CLI_SOURCE_LOCAL" ]; then
+    rm -f "$src"
+  fi
 
   echo "  ✓ Installed to: $CLI_TARGET"
 

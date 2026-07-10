@@ -8,38 +8,51 @@ A lightweight token usage leaderboard for OpenCode users. Track how many tokens 
 
 ## Quick Start
 
-### 1. Install the CLI
+### 1. Install the CLI (no clone needed)
 
 ```bash
-git clone https://github.com/dac63701/token-leaderboard.git
-cd token-leaderboard
-./install.sh
+curl -fsSL https://token.dac63701.com/install.sh | bash
 ```
 
-Or copy manually:
-
+Or with all defaults (non-interactive):
 ```bash
-cp cli/token-leaderboard ~/.local/bin/
-chmod +x ~/.local/bin/token-leaderboard
+curl -fsSL https://token.dac63701.com/install.sh | bash -s -- --yes
 ```
 
-### 2. Start the server
-
+Or from the raw GitHub URL directly:
 ```bash
-cd server
-npm install
-npm start
+curl -fsSL https://raw.githubusercontent.com/dac63701/token-leaderboard/main/install.sh | bash
 ```
 
-Open http://localhost:3456 in your browser.
-
-### 3. Upload your tokens
+### 2. Upload your tokens
 
 ```bash
 token-leaderboard
 ```
 
-On first run, you'll be prompted for a nickname and server URL. After that, it reads your OpenCode database and uploads all new sessions.
+On first run, you'll authenticate with GitHub and configure the server URL. After that, it reads your OpenCode database and uploads all new sessions.
+
+### 3. View the leaderboard
+
+Open https://token.dac63701.com in your browser.
+
+---
+
+### Running the server locally
+
+```bash
+git clone https://github.com/dac63701/token-leaderboard.git
+cd token-leaderboard/server
+npm install
+npm start
+```
+
+Open http://localhost:3456 in your browser. Then install the CLI pointing at your local server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dac63701/token-leaderboard/main/install.sh | bash -s -- --yes
+# Edit ~/.config/token-leaderboard/config and change SERVER_URL to http://localhost:3456
+```
 
 ## Usage
 
@@ -170,21 +183,15 @@ Or use a VPS.
 
 ## Uninstall
 
-From the cloned repo (removes CLI, config, and shell hooks with confirmation):
-```bash
-./uninstall.sh
-```
-
-Or via the CLI itself (no confirmation, run from anywhere):
 ```bash
 token-leaderboard --uninstall
 ```
 
-Both do the same thing: remove the binary from `~/.local/bin/token-leaderboard`, delete `~/.config/token-leaderboard/`, and clean up auto-upload hooks from your shell rc files.
+Removes the CLI binary from `~/.local/bin/token-leaderboard`, deletes `~/.config/token-leaderboard/`, and cleans up auto-upload hooks from your shell rc files.
 
-To also remove the cloned repository:
+Or from the cloned repo with confirmation:
 ```bash
-cd .. && rm -rf token-leaderboard
+./uninstall.sh
 ```
 
 ## Privacy

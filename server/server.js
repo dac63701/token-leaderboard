@@ -550,6 +550,20 @@ app.get("/api/pricing", (req, res) => {
   }
 });
 
+// ── GET /install.sh ─────────────────────────────────────────────────────────
+app.get("/install.sh", (_req, res) => {
+  const installPath = path.join(__dirname, "..", "install.sh");
+  if (fs.existsSync(installPath)) {
+    res.setHeader("Content-Type", "text/x-shellscript");
+    res.sendFile(installPath);
+  } else {
+    res.redirect(
+      302,
+      "https://raw.githubusercontent.com/dac63701/token-leaderboard/main/install.sh",
+    );
+  }
+});
+
 // ── GET /api/cli/version ────────────────────────────────────────────────────
 app.get("/api/cli/version", (_req, res) => {
   res.json({
