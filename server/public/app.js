@@ -23,7 +23,10 @@ const state = {
   settingsOpen: false,
   autoRefreshEnabled: true,
   _serverConnected: true,
-  _refreshing: false
+  _refreshing: false,
+  adminToken: null,
+  adminUsers: [],
+  confirmPending: null
 };
 
 /* ---- Helpers ---- */
@@ -864,6 +867,216 @@ function initHomeTableDelegation() {
   });
 }
 
+/* ---- Admin ---- */
+
+function initAdmin() {
+  var stored = sessionStorage.getItem('tl_admin_token');
+  if (stored) state.adminToken = stored;
+
+  $('#admin-login-btn').addEventListener('click', adminLogin);
+  $('#admin-password').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') adminLogin();
+  });
+  $('#admin-logout-btn').addEventListener('click', adminLogout);
+
+  $('#confirm-cancel').addEventListener('click', closeConfirm);
+  $('#confirm-ok').addEventListener('click', confirmAction);
+  $('#confirm-modal-close').addEventListener('click', closeConfirm);
+  $('#confirm-modal').addEventListener('click', function(e) {
+    if (e.target === $('#confirm-modal')) closeConfirm();
+  });
+
+  updateAdminUI();
+}
+
+async function adminLogin() {
+  var pw = $('#admin-password');
+  var error = $('#admin-login-error');
+  var btn = $('#admin-login-btn');
+
+  error.classList.add('hidden');
+  btn.disabled = true;
+  btn.textContent = 'Logging in...';
+
+  try {
+    var res = await fetch('/api/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw.value })
+    });
+
+    if (!res.ok) {
+      var data;
+      try { data = await res.json(); } catch (e) {}
+      throw new Error((data && data.error) || 'Login failed: ' + res.status);
+    }
+
+    var data = await res.json();
+    state.adminToken = data.token;
+    sessionStorage.setItem('tl_admin_token', data.token);
+    pw.value = '';
+    updateAdminUI();
+    fetchAdminUsers();
+  } catch (err) {
+    error.textContent = err.message;
+    error.classList.remove('hidden');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Login';
+  }
+}
+
+function adminLogout() {
+  if (state.adminToken) {
+    fetch('/api/admin/logout', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + state.adminToken }
+    }).catch(function() {});
+  }
+  state.adminToken = null;
+  sessionStorage.removeItem('tl_admin_token');
+  state.adminUsers = [];
+  updateAdminUI();
+}
+
+function updateAdminUI() {
+  var loginView = $('#admin-login-view');
+  var manageView = $('#admin-manage-view');
+
+  if (state.adminToken) {
+    loginView.classList.add('hidden');
+    manageView.classList.remove('hidden');
+  } else {
+    loginView.classList.remove('hidden');
+    manageView.classList.add('hidden');
+  }
+}
+
+async function fetchAdminUsers() {
+  if (!state.adminToken) return;
+
+  var loading = $('#admin-users-loading');
+  var error = $('#admin-users-error');
+  var container = $('#admin-users-container');
+
+  loading.classList.remove('hidden');
+  error.classList.add('hidden');
+  container.innerHTML = '';
+
+  try {
+    var res = await fetch('/api/admin/users', {
+      headers: { 'Authorization': 'Bearer ' + state.adminToken }
+    });
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        adminLogout();
+        return;
+      }
+      throw new Error('Failed to load users: ' + res.status);
+    }
+
+    state.adminUsers = await res.json();
+    renderAdminUsers();
+  } catch (err) {
+    error.textContent = err.message;
+    error.classList.remove('hidden');
+  } finally {
+    loading.classList.add('hidden');
+  }
+}
+
+function renderAdminUsers() {
+  var container = $('#admin-users-container');
+  var users = state.adminUsers;
+
+  if (!users || users.length === 0) {
+    container.innerHTML = '<p class="loading" style="padding:24px 0">No users found.</p>';
+    return;
+  }
+
+  var rows = users.map(function(u) {
+    return '<tr>' +
+      '<td class="nickname-cell">' + escapeHtml(u.nickname) + '</td>' +
+      '<td class="num-cell">' + formatNumber(u.total_input + u.total_output + (u.total_cache_read || 0) + (u.total_cache_write || 0) + (u.total_reasoning || 0)) + '</td>' +
+      '<td class="num-cell">$' + formatCost(u.total_cost || 0) + '</td>' +
+      '<td class="num-cell">' + formatNumber(u.session_count || 0) + '</td>' +
+      '<td><button class="admin-btn admin-btn-sm admin-btn-danger admin-delete-btn" data-nickname="' + escapeHtml(u.nickname) + '">Delete</button></td>' +
+    '</tr>';
+  }).join('');
+
+  container.innerHTML = '<div class="table-wrapper">' +
+    '<table>' +
+      '<thead><tr>' +
+        '<th>Nickname</th><th>Total Tokens</th><th>Cost</th><th>Sessions</th><th>Action</th>' +
+      '</tr></thead>' +
+      '<tbody>' + rows + '</tbody>' +
+    '</table>' +
+  '</div>';
+
+  container.querySelectorAll('.admin-delete-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      showConfirm(
+        'Delete User',
+        'Delete "' + btn.dataset.nickname + '" from the leaderboard? This cannot be undone.',
+        function() { adminDeleteUser(btn.dataset.nickname); }
+      );
+    });
+  });
+}
+
+async function adminDeleteUser(nickname) {
+  try {
+    var res = await fetch('/api/admin/delete', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + state.adminToken
+      },
+      body: JSON.stringify({ nickname: nickname })
+    });
+
+    if (!res.ok) {
+      var data;
+      try { data = await res.json(); } catch (e) {}
+      if (res.status === 401) { adminLogout(); return; }
+      throw new Error((data && data.error) || 'Delete failed: ' + res.status);
+    }
+
+    fetchAdminUsers();
+    refreshData();
+  } catch (err) {
+    alert('Error: ' + err.message);
+  }
+}
+
+function showConfirm(title, message, onOk) {
+  state.confirmPending = onOk;
+  $('#confirm-title').textContent = title;
+  $('#confirm-message').textContent = message;
+
+  var modal = $('#confirm-modal');
+  modal.classList.remove('hidden');
+  requestAnimationFrame(function() {
+    modal.classList.add('visible');
+  });
+}
+
+function closeConfirm() {
+  state.confirmPending = null;
+  var modal = $('#confirm-modal');
+  modal.classList.remove('visible');
+  setTimeout(function() {
+    modal.classList.add('hidden');
+  }, 200);
+}
+
+function confirmAction() {
+  var fn = state.confirmPending;
+  closeConfirm();
+  if (fn) fn();
+}
+
 /* ---- Init ---- */
 
 function init() {
@@ -909,6 +1122,7 @@ function init() {
 
   initSettings();
   initLogin();
+  initAdmin();
   initTooltipListeners();
   initHomeTableDelegation();
 

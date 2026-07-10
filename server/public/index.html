@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Token Leaderboard</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='20,16 16,9.07 8,9.07 4,16 8,22.93 16,22.93' fill='none' stroke='%234a9eff' stroke-width='2.5' stroke-linejoin='round'/%3E%3Cpolygon points='28,16 24,9.07 16,9.07 12,16 16,22.93 24,22.93' fill='none' stroke='%234a9eff' stroke-width='1.8' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%234a9eff'/%3E%3C/svg%3E">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='20,16 16,8 8,8 4,16 8,24 16,24' fill='none' stroke='%234a9eff' stroke-width='2' stroke-linejoin='round'/%3E%3Cpolygon points='28,16 24,8 16,8 12,16 16,24 24,24' fill='none' stroke='%2380b3ff' stroke-width='1.5' stroke-linejoin='round'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%234a9eff'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -55,6 +55,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="home">Home</button>
     <button class="tab" data-tab="detailed">Detailed</button>
+    <button class="tab" data-tab="admin">Admin</button>
   </nav>
 
   <main>
@@ -84,6 +85,29 @@
       </div>
       <div id="detailed-error" class="message error hidden"></div>
       <div id="detailed-table-container"></div>
+    </div>
+
+    <div id="tab-admin" class="tab-content">
+      <h2 class="tab-title">Admin</h2>
+      <div id="admin-login-view">
+        <div class="admin-login-box">
+          <p class="admin-login-desc">Enter the admin password to manage users.</p>
+          <div class="admin-login-form">
+            <input type="password" id="admin-password" class="admin-input" placeholder="Admin password" autocomplete="off">
+            <button id="admin-login-btn" class="admin-btn">Login</button>
+          </div>
+          <p id="admin-login-error" class="admin-error hidden"></p>
+        </div>
+      </div>
+      <div id="admin-manage-view" class="hidden">
+        <div class="admin-bar">
+          <span class="admin-badge">Admin</span>
+          <button id="admin-logout-btn" class="admin-btn admin-btn-sm">Log out</button>
+        </div>
+        <div id="admin-users-loading" class="loading">Loading users...</div>
+        <div id="admin-users-error" class="message error hidden"></div>
+        <div id="admin-users-container"></div>
+      </div>
     </div>
   </main>
 
@@ -128,6 +152,18 @@
       <p class="device-url" id="device-url"></p>
       <p class="device-code" id="device-code"></p>
       <p id="login-status" class="login-status"></p>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="modal-overlay hidden">
+    <div class="modal-box modal-box-sm">
+      <button id="confirm-modal-close" class="btn-close">&times;</button>
+      <h3 id="confirm-title">Confirm</h3>
+      <p id="confirm-message"></p>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="admin-btn admin-btn-sm">Cancel</button>
+        <button id="confirm-ok" class="admin-btn admin-btn-sm admin-btn-danger">Delete</button>
+      </div>
     </div>
   </div>
 

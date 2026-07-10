@@ -5,6 +5,7 @@ import path from "path";
 import fs from "fs";
 import { initPricingEngine, lookupPricing } from "./pricing.js";
 import createAuthRouter from "./auth.js";
+import createAdminRouter, { initAdmin } from "./admin.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -244,6 +245,9 @@ app.use(express.static(publicDir));
 
 // ── Auth routes ─────────────────────────────────────────────────────────────
 app.use("/api", createAuthRouter(db));
+
+// ── Admin routes ────────────────────────────────────────────────────────────
+app.use("/api", createAdminRouter(db));
 
 // ── POST /api/upload ────────────────────────────────────────────────────────
 app.post("/api/upload", (req, res) => {
@@ -574,6 +578,7 @@ app.get("/api/cli/version", (_req, res) => {
 });
 
 // ── Start ───────────────────────────────────────────────────────────────────
+initAdmin();
 initPricingEngine().then(() => {
   console.log("Pricing engine initialized");
 });
