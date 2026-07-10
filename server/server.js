@@ -295,11 +295,10 @@ app.post("/api/upload", (req, res) => {
     // Parse existing session IDs
     const existingIds = new Set(parseSessionIds(existingRow));
 
-    // Filter to truly new sessions
+    // Separate new vs delta sessions
     const newSessions = sessions.filter((s) => !existingIds.has(s.id));
 
-    if (newSessions.length === 0) {
-      // No new data — just touch time_uploaded
+    if (newSessions.length === 0 && sessions.length === 0) {
       if (existingRow) {
         db.prepare(
           "UPDATE uploads SET time_uploaded = ?, uploader_github_id = COALESCE(?, uploader_github_id) WHERE nickname = ?",
@@ -308,14 +307,14 @@ app.post("/api/upload", (req, res) => {
       return res.json({ status: "ok", sessions_uploaded: 0 });
     }
 
-    // Merge session IDs
+    // Merge session IDs (only new sessions get added)
     const allSessionIds = [...existingIds, ...newSessions.map((s) => s.id)];
     const sessionIdsJson = JSON.stringify(allSessionIds);
 
-    // Compute totals for new sessions only
-    const totals = computeTotals(newSessions);
+    // Compute totals from ALL sessions (new + delta diffs)
+    const totals = computeTotals(sessions);
 
-    // Merge models with existing data
+    // Merge models with ALL sessions
     let mergedModels;
     if (existingRow) {
       let existingModels = [];
@@ -324,9 +323,9 @@ app.post("/api/upload", (req, res) => {
       } catch {
         existingModels = [];
       }
-      mergedModels = mergeModels(existingModels, newSessions);
+      mergedModels = mergeModels(existingModels, sessions);
     } else {
-      mergedModels = computeModels(newSessions);
+      mergedModels = computeModels(sessions);
     }
 
     upsertStmt.run({
@@ -623,34 +622,48 @@ app.get("/api/cli/version", async (_req, res) => {
   const buf = await fetchCliFromGitHub();
   if (buf) {
     const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
-    // Also cache the content for download endpoint
+    // Cache the content for manual download via /api/cli/download
     const cacheDir = path.join(__dirname, "data");
     fs.mkdirSync(cacheDir, { recursive: true });
     fs.writeFileSync(path.join(cacheDir, ".cli-cached"), buf);
-    res.json({ sha256, url: "/api/cli/download" });
+    // Return GitHub raw URL so CLI downloads from the same source the hash came from
+    res.json({ sha256, url: CLI_GITHUB_URL });
   } else if (cliPath) {
-    // Fall back to local copy
     const content = fs.readFileSync(cliPath);
     const sha256 = crypto.createHash("sha256").update(content).digest("hex");
     res.json({ sha256, url: "/api/cli/download" });
   } else {
-    // Last resort: tell CLI to fetch from GitHub directly
     res.json({ sha256: "", url: CLI_GITHUB_URL });
   }
 });
 
 // ── GET /api/cli/download ───────────────────────────────────────────────────
+function serveCliFile(filePath, res) {
+  try {
+    const stat = fs.statSync(filePath);
+    res.setHeader("Content-Type", "text/x-shellscript");
+    res.setHeader("Content-Length", stat.size);
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+    stream.on("error", () => {
+      if (!res.headersSent) res.redirect(302, CLI_GITHUB_URL);
+    });
+  } catch {
+    res.redirect(302, CLI_GITHUB_URL);
+  }
+}
+
 app.get("/api/cli/download", (_req, res) => {
   const cachePath = path.join(__dirname, "data", ".cli-cached");
   if (fs.existsSync(cachePath)) {
-    res.setHeader("Content-Type", "text/x-shellscript");
-    res.sendFile(cachePath);
-    return;
+    return serveCliFile(cachePath, res);
   }
-  if (cliPath && fs.existsSync(cliPath)) {
-    res.setHeader("Content-Type", "text/x-shellscript");
-    res.sendFile(cliPath);
-    return;
+  if (cliPath) {
+    const found = findCliPath();
+    if (found) {
+      cliPath = found;
+      return serveCliFile(cliPath, res);
+    }
   }
   res.redirect(302, CLI_GITHUB_URL);
 });

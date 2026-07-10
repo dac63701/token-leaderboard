@@ -10,7 +10,7 @@ set -o pipefail
 # ============================================================
 # Version
 # ============================================================
-VERSION="1.0.2"
+VERSION="1.1.0"
 
 # ============================================================
 # Paths
@@ -694,11 +694,36 @@ read_codex_cli() {
     [ -z "$token_lines" ] && continue
     local last_token_line
     last_token_line=$(echo "$token_lines" | tail -1)
-    local input_tokens cached_input_tokens output_tokens reasoning_tokens
-    input_tokens=$(echo "$last_token_line" | parse_json_value "input_tokens")
-    cached_input_tokens=$(echo "$last_token_line" | parse_json_value "cached_input_tokens")
-    output_tokens=$(echo "$last_token_line" | parse_json_value "output_tokens")
-    reasoning_tokens=$(echo "$last_token_line" | parse_json_value "reasoning_output_tokens")
+
+    local input_tokens=0 cached_input_tokens=0 output_tokens=0 reasoning_tokens=0
+    if command -v python3 &>/dev/null; then
+      local parsed
+      parsed=$(echo "$last_token_line" | python3 -c "
+import sys, json
+line = sys.stdin.read()
+data = json.loads(line)
+info = data.get('payload', {}).get('info')
+if info:
+    usage = info.get('total_token_usage', {})
+    print(usage.get('input_tokens', 0))
+    print(usage.get('cached_input_tokens', 0))
+    print(usage.get('output_tokens', 0))
+    print(usage.get('reasoning_output_tokens', 0))
+else:
+    print('0\n0\n0\n0')
+" 2>/dev/null) || true
+      if [ -n "$parsed" ]; then
+        input_tokens=$(echo "$parsed" | sed -n '1p')
+        cached_input_tokens=$(echo "$parsed" | sed -n '2p')
+        output_tokens=$(echo "$parsed" | sed -n '3p')
+        reasoning_tokens=$(echo "$parsed" | sed -n '4p')
+      fi
+    else
+      input_tokens=$(echo "$last_token_line" | parse_json_value "input_tokens")
+      cached_input_tokens=$(echo "$last_token_line" | parse_json_value "cached_input_tokens")
+      output_tokens=$(echo "$last_token_line" | parse_json_value "output_tokens")
+      reasoning_tokens=$(echo "$last_token_line" | parse_json_value "reasoning_output_tokens")
+    fi
     input_tokens=${input_tokens:-0}
     cached_input_tokens=${cached_input_tokens:-0}
     output_tokens=${output_tokens:-0}
@@ -858,23 +883,66 @@ run_upload_cycle() {
   UPLOAD_IS_DELTA=()
   UPLOAD_TIMES_UPDATED=()
   UPLOAD_SOURCES=()
+  # Full current values for session state tracking (used regardless of delta)
+  UPLOAD_FULL_INPUT=()
+  UPLOAD_FULL_OUTPUT=()
+  UPLOAD_FULL_CACHE_READ=()
+  UPLOAD_FULL_CACHE_WRITE=()
+  UPLOAD_FULL_REASONING=()
 
   for i in "${!SESSION_IDS[@]}"; do
     if [ "${IS_NEW[$i]}" = "1" ] || [ "${IS_DELTA[$i]}" = "1" ]; then
       UPLOAD_IDS+=("${SESSION_IDS[$i]}")
       UPLOAD_MODEL_IDS+=("${MODEL_IDS[$i]}")
       UPLOAD_PROVIDERS+=("${PROVIDERS[$i]}")
-      UPLOAD_INPUT+=("${TOKENS_INPUT[$i]}")
-      UPLOAD_OUTPUT+=("${TOKENS_OUTPUT[$i]}")
-      UPLOAD_CACHE_READ+=("${TOKENS_CACHE_READ[$i]}")
-      UPLOAD_CACHE_WRITE+=("${TOKENS_CACHE_WRITE[$i]}")
-      UPLOAD_REASONING+=("${TOKENS_REASONING[$i]}")
       UPLOAD_COSTS+=("${COSTS[$i]}")
       UPLOAD_TIMES+=("${TIMES_CREATED[$i]}")
       UPLOAD_TITLES+=("${TITLES[$i]}")
       UPLOAD_IS_DELTA+=("${IS_DELTA[$i]}")
       UPLOAD_TIMES_UPDATED+=("${TIMES_UPDATED[$i]}")
       UPLOAD_SOURCES+=("${SOURCES[$i]}")
+
+      # Always store full current values for session state
+      UPLOAD_FULL_INPUT+=("${TOKENS_INPUT[$i]}")
+      UPLOAD_FULL_OUTPUT+=("${TOKENS_OUTPUT[$i]}")
+      UPLOAD_FULL_CACHE_READ+=("${TOKENS_CACHE_READ[$i]}")
+      UPLOAD_FULL_CACHE_WRITE+=("${TOKENS_CACHE_WRITE[$i]}")
+      UPLOAD_FULL_REASONING+=("${TOKENS_REASONING[$i]}")
+
+      if [ "${IS_DELTA[$i]}" = "1" ]; then
+        # Send only the difference since last upload
+        local state_line
+        state_line=$(get_session_state "${SESSION_IDS[$i]}")
+        local old_ti old_to old_tcr old_tcw old_tr
+        old_ti=$(echo "$state_line" | cut -d'|' -f2)
+        old_to=$(echo "$state_line" | cut -d'|' -f3)
+        old_tcr=$(echo "$state_line" | cut -d'|' -f4)
+        old_tcw=$(echo "$state_line" | cut -d'|' -f5)
+        old_tr=$(echo "$state_line" | cut -d'|' -f6)
+        old_ti=${old_ti:-0}; old_to=${old_to:-0}; old_tcr=${old_tcr:-0}; old_tcw=${old_tcw:-0}; old_tr=${old_tr:-0}
+        local diff_input diff_output diff_cache_read diff_cache_write diff_reasoning
+        diff_input=$(( TOKENS_INPUT[i] - old_ti ))
+        diff_output=$(( TOKENS_OUTPUT[i] - old_to ))
+        diff_cache_read=$(( TOKENS_CACHE_READ[i] - old_tcr ))
+        diff_cache_write=$(( TOKENS_CACHE_WRITE[i] - old_tcw ))
+        diff_reasoning=$(( TOKENS_REASONING[i] - old_tr ))
+        [ "$diff_input" -lt 0 ] && diff_input=0
+        [ "$diff_output" -lt 0 ] && diff_output=0
+        [ "$diff_cache_read" -lt 0 ] && diff_cache_read=0
+        [ "$diff_cache_write" -lt 0 ] && diff_cache_write=0
+        [ "$diff_reasoning" -lt 0 ] && diff_reasoning=0
+        UPLOAD_INPUT+=("${diff_input}")
+        UPLOAD_OUTPUT+=("${diff_output}")
+        UPLOAD_CACHE_READ+=("${diff_cache_read}")
+        UPLOAD_CACHE_WRITE+=("${diff_cache_write}")
+        UPLOAD_REASONING+=("${diff_reasoning}")
+      else
+        UPLOAD_INPUT+=("${TOKENS_INPUT[$i]}")
+        UPLOAD_OUTPUT+=("${TOKENS_OUTPUT[$i]}")
+        UPLOAD_CACHE_READ+=("${TOKENS_CACHE_READ[$i]}")
+        UPLOAD_CACHE_WRITE+=("${TOKENS_CACHE_WRITE[$i]}")
+        UPLOAD_REASONING+=("${TOKENS_REASONING[$i]}")
+      fi
     fi
   done
 
@@ -945,11 +1013,11 @@ run_upload_cycle() {
       echo "${UPLOAD_IDS[$i]}" >> "$UPLOADED_FILE"
       save_session_state_line \
         "${UPLOAD_IDS[$i]}" \
-        "${UPLOAD_INPUT[$i]}" \
-        "${UPLOAD_OUTPUT[$i]}" \
-        "${UPLOAD_CACHE_READ[$i]}" \
-        "${UPLOAD_CACHE_WRITE[$i]}" \
-        "${UPLOAD_REASONING[$i]}" \
+        "${UPLOAD_FULL_INPUT[$i]}" \
+        "${UPLOAD_FULL_OUTPUT[$i]}" \
+        "${UPLOAD_FULL_CACHE_READ[$i]}" \
+        "${UPLOAD_FULL_CACHE_WRITE[$i]}" \
+        "${UPLOAD_FULL_REASONING[$i]}" \
         "${UPLOAD_TIMES_UPDATED[$i]}"
     done
     if [ "$AUTO_MODE" = false ]; then
