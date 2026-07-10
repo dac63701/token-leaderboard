@@ -564,11 +564,18 @@ json_escape() {
   local s="$1"
   s="${s//\\/\\\\}"
   s="${s//\"/\\\"}"
-  s="${s//$'\t'/ }"
-  s="${s//$'\n'/ }"
-  s="${s//$'\r'/ }"
-  s=$(printf '%s' "$s" | tr -d '\000-\037\177' 2>/dev/null)
+  s=$(printf '%s' "$s" | LC_ALL=C tr -d '\000-\037\177' 2>/dev/null || printf '%s' "$s")
   printf '%s' "$s"
+}
+
+# Validate a JSON value is a number (non-empty, digits/dot/dash)
+ensure_num() {
+  local val="$1" default="${2:-0}"
+  if [ -z "$val" ] || ! printf '%s' "$val" | grep -qE '^-?[0-9]+\.?[0-9]*$'; then
+    printf '%s' "$default"
+  else
+    printf '%s' "$val"
+  fi
 }
 
 # ============================================================
@@ -876,37 +883,34 @@ run_upload_cycle() {
     return 0
   fi
 
-  # Build JSON payload
-  local nickname_escaped
-  nickname_escaped=$(json_escape "$NICKNAME")
-  local json="{\"nickname\":\"${nickname_escaped}\",\"sessions\":["
-  local first=true
-  for i in "${!UPLOAD_IDS[@]}"; do
-    local id_escaped model_id_escaped provider_escaped title_escaped source_escaped
-    id_escaped=$(json_escape "${UPLOAD_IDS[$i]}")
-    model_id_escaped=$(json_escape "${UPLOAD_MODEL_IDS[$i]}")
-    provider_escaped=$(json_escape "${UPLOAD_PROVIDERS[$i]}")
-    title_escaped=$(json_escape "${UPLOAD_TITLES[$i]}")
-    source_escaped=$(json_escape "${UPLOAD_SOURCES[$i]}")
-    if [ "$first" = true ]; then first=false; else json+=","; fi
-    json+="{\"id\":\"${id_escaped}\""
-    json+=",\"model_id\":\"${model_id_escaped}\""
-    json+=",\"provider\":\"${provider_escaped}\""
-    json+=",\"input\":${UPLOAD_INPUT[$i]}"
-    json+=",\"output\":${UPLOAD_OUTPUT[$i]}"
-    json+=",\"cache_read\":${UPLOAD_CACHE_READ[$i]}"
-    json+=",\"cache_write\":${UPLOAD_CACHE_WRITE[$i]}"
-    json+=",\"reasoning\":${UPLOAD_REASONING[$i]}"
-    json+=",\"cost\":${UPLOAD_COSTS[$i]}"
-    json+=",\"time_created\":${UPLOAD_TIMES[$i]}"
-    json+=",\"title\":\"${title_escaped}\""
-    json+=",\"source\":\"${source_escaped}\""
-    if [ "${UPLOAD_IS_DELTA[$i]}" = "1" ]; then
-      json+=",\"delta\":true"
-    fi
-    json+="}"
-  done
-  json+="]}"
+  # Build JSON payload to a temp file (avoids shell quoting issues with -d @file)
+  local tmpfile first
+  tmpfile=$(mktemp /tmp/tl-payload.XXXXXX)
+  first=true
+
+  {
+    printf '{"nickname":"%s","sessions":[' "$(json_escape "$NICKNAME")"
+    for i in "${!UPLOAD_IDS[@]}"; do
+      if [ "$first" = true ]; then first=false; else printf ','; fi
+      printf '{"id":"%s"' "$(json_escape "${UPLOAD_IDS[$i]}")"
+      printf ',"model_id":"%s"' "$(json_escape "${UPLOAD_MODEL_IDS[$i]}")"
+      printf ',"provider":"%s"' "$(json_escape "${UPLOAD_PROVIDERS[$i]}")"
+      printf ',"input":%s' "$(ensure_num "${UPLOAD_INPUT[$i]}")"
+      printf ',"output":%s' "$(ensure_num "${UPLOAD_OUTPUT[$i]}")"
+      printf ',"cache_read":%s' "$(ensure_num "${UPLOAD_CACHE_READ[$i]}")"
+      printf ',"cache_write":%s' "$(ensure_num "${UPLOAD_CACHE_WRITE[$i]}")"
+      printf ',"reasoning":%s' "$(ensure_num "${UPLOAD_REASONING[$i]}")"
+      printf ',"cost":%s' "$(ensure_num "${UPLOAD_COSTS[$i]}")"
+      printf ',"time_created":%s' "$(ensure_num "${UPLOAD_TIMES[$i]}")"
+      printf ',"title":"%s"' "$(json_escape "${UPLOAD_TITLES[$i]}")"
+      printf ',"source":"%s"' "$(json_escape "${UPLOAD_SOURCES[$i]}")"
+      if [ "${UPLOAD_IS_DELTA[$i]}" = "1" ]; then
+        printf ',"delta":true'
+      fi
+      printf '}'
+    done
+    printf ']}'
+  } > "$tmpfile"
 
   # Upload
   local upload_endpoint="${SERVER_URL}/api/upload"
@@ -925,8 +929,9 @@ run_upload_cycle() {
   if [ -n "$GITHUB_TOKEN" ]; then
     curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
   fi
-  curl_args+=(-d "$json" "$upload_endpoint")
+  curl_args+=(-d "@${tmpfile}" "$upload_endpoint")
   response=$(curl "${curl_args[@]}" 2>/dev/null)
+  rm -f "$tmpfile"
 
   local http_code body
   http_code=$(echo "$response" | tail -1)
