@@ -33,9 +33,22 @@ for arg in "$@"; do
 done
 
 # ---- Utility functions ----
+_stdin_tty() {
+  # When piped (curl | bash), stdin is consumed by the pipe so read gets EOF.
+  # Redirect to /dev/tty to reach the user's terminal.
+  if [ -t 0 ]; then
+    return 0
+  fi
+  if exec <>/dev/tty 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 prompt() {
   local msg="$1" default="$2" var_name="$3"
   local input
+  _stdin_tty || true
   if [ -n "$default" ]; then
     read -r -p "$msg [$default]: " input
   else
@@ -50,6 +63,7 @@ prompt() {
 prompt_yn() {
   local msg="$1" default="$2" var_name="$3"
   local input result
+  _stdin_tty || true
   read -r -p "$msg " input
   input="$(echo "${input:-$default}" | tr '[:upper:]' '[:lower:]')"
   case "$input" in
