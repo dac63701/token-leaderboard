@@ -274,6 +274,24 @@ github_login_prompt() {
   echo ""
 
   local poll_interval="${interval:-5}"
+
+  # Attempt to open the URL in the default browser
+  local browser_cmd=""
+  if command -v open &>/dev/null; then
+    browser_cmd="open"
+  elif command -v xdg-open &>/dev/null; then
+    browser_cmd="xdg-open"
+  elif command -v explorer.exe &>/dev/null; then
+    browser_cmd="explorer.exe"
+  fi
+
+  if [ -n "$browser_cmd" ]; then
+    read -r -p "  Press Enter to open the URL in your browser (or type 'n' to skip)... " skip_browser
+    if [ "$skip_browser" != "n" ] && [ "$skip_browser" != "N" ]; then
+      $browser_cmd "${verification_uri:-https://github.com/login/device}" 2>/dev/null || true
+    fi
+  fi
+  echo ""
   echo "  Waiting for authentication …"
 
   while true; do
