@@ -42,7 +42,7 @@ _read_tty() {
   elif (: </dev/tty) 2>/dev/null; then
     read -r "$@" </dev/tty
   else
-    read -r "$@"
+    read -r "$@" || true
   fi
 }
 
