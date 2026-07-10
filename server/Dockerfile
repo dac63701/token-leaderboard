@@ -11,7 +11,7 @@ RUN apk add --no-cache sqlite-libs curl
 WORKDIR /app
 
 COPY --from=builder /app/node_modules ./node_modules
-COPY package.json server.js pricing.js auth.js ./
+COPY package.json server.js pricing.js auth.js admin.js ./
 COPY public ./public
 
 # Ensure data directory exists for SQLite
